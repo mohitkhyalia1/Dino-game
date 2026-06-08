@@ -738,338 +738,693 @@ class Weather {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  BACKGROUND PAINTER  — rich cinematic parallax
+//  BACKGROUND PAINTER  — Cinematic 2.5D World
 // ═══════════════════════════════════════════════════════════════
 class Background {
   constructor(ctx){
     this.ctx=ctx; this.isNight=false;
     this.scroll=[0,0,0,0,0,0];
-    this.mtnsFar=this._genMtns(10,70,120,W*2.5);
-    this.mtnsMid=this._genMtns(14,35,65,W*2);
-    this.mtnsNear=this._genMtns(8,18,35,W*1.5);
-    this.clouds=this._genClouds(18);
-    this.trees=this._genTrees(24);
-    this.stars=Array.from({length:160},()=>({x:Math.random()*W,y:Math.random()*H*0.72,r:0.5+Math.random()*1.8,tw:2+Math.random()*4,tp:Math.random()*4}));
-    this.groundDust=Array.from({length:50},()=>({x:Math.random()*W*3,y:GY+6+Math.random()*16,r:2+Math.random()*6}));
+    // Generate realistic mountain ridges using fractal subdivision
+    this.mtnsFar=this._genRealisticMtns(6, 55, 110, W*3, 0);
+    this.mtnsMid=this._genRealisticMtns(8, 28, 62, W*2.2, 1);
+    this.mtnsNear=this._genRealisticMtns(5, 14, 32, W*1.6, 2);
+    this.clouds=this._genVolumeClouds(14);
+    this.trees=this._genTrees(28);
+    this.stars=Array.from({length:200},()=>({
+      x:Math.random()*W, y:Math.random()*H*0.75,
+      r:0.4+Math.random()*1.6,
+      tw:2.5+Math.random()*5, tp:Math.random()*6,
+      col:`hsl(${200+Math.random()*80},${40+Math.random()*40}%,${70+Math.random()*30}%)`
+    }));
+    // Ground surface details: pebbles, tire tracks, dust accumulation
+    this.groundPebbles=Array.from({length:80},()=>({
+      x:Math.random()*W*3.5, y:GY+2+Math.random()*18,
+      rx:1.5+Math.random()*4.5, ry:0.7+Math.random()*2.2,
+      tilt:(Math.random()-0.5)*0.4,
+      val:0.55+Math.random()*0.35
+    }));
+    this.trackLines=Array.from({length:12},()=>({x:Math.random()*W*3.5}));
     this.dn=new DayNight();
+    this._sunAngle=0;
   }
-  _genMtns(n,minH,maxH,wrap){
-    return Array.from({length:n},(_,i)=>({
-      x:(i/n)*wrap+Math.random()*(wrap/n),
-      w:70+Math.random()*100, h:minH+Math.random()*(maxH-minH),
-      jagged:Array.from({length:8},()=>Math.random()),
-      snowCap:Math.random()>0.5
-    }));
+
+  // Fractal midpoint displacement for realistic ridgelines
+  _genRealisticMtns(count, minH, maxH, wrap, seed){
+    const mtns=[];
+    for(let i=0;i<count;i++){
+      const w=100+Math.random()*160;
+      const h=minH+Math.random()*(maxH-minH);
+      // Generate ridge using midpoint displacement
+      const pts=this._fractalRidge(w, h, 5+(seed*2));
+      const hasSnow=(h>maxH*0.72)&&Math.random()>0.4;
+      // Erosion: add small ridges on slope
+      const ridges=Array.from({length:3+Math.floor(Math.random()*4)},()=>({
+        pos:0.1+Math.random()*0.8, depth:0.05+Math.random()*0.15
+      }));
+      mtns.push({
+        x:(i/count)*wrap+Math.random()*(wrap/count),
+        w, h, pts, hasSnow, ridges,
+        aspect:0.3+Math.random()*0.5  // left-right asymmetry
+      });
+    }
+    return mtns;
   }
-  _genClouds(n){
-    return Array.from({length:n},()=>({
-      x:Math.random()*W*2.5, y:15+Math.random()*110,
-      w:80+Math.random()*160, h:22+Math.random()*38,
-      speed:0.25+Math.random()*0.5, layer:Math.random()<0.4?0:1
-    }));
+
+  _fractalRidge(width, height, iterations){
+    let pts=[{x:0,y:0},{x:width,y:0}];
+    // Add peak
+    const peak={x:width*(0.35+Math.random()*0.3), y:height};
+    pts=[{x:0,y:0},peak,{x:width,y:0}];
+    // Midpoint displacement
+    for(let it=0;it<iterations;it++){
+      const npts=[];
+      for(let i=0;i<pts.length-1;i++){
+        npts.push(pts[i]);
+        const mx=(pts[i].x+pts[i+1].x)/2;
+        const my=(pts[i].y+pts[i+1].y)/2;
+        const disp=height*(0.18/(it+1))*(Math.random()*2-1);
+        npts.push({x:mx, y:Math.max(0,my+disp)});
+      }
+      npts.push(pts[pts.length-1]);
+      pts=npts;
+    }
+    return pts;
   }
+
+  _genVolumeClouds(n){
+    return Array.from({length:n},()=>{
+      // Each cloud has a set of spherical puffs
+      const puffCount=3+Math.floor(Math.random()*5);
+      const w=90+Math.random()*180;
+      const h=28+Math.random()*45;
+      const puffs=[];
+      for(let i=0;i<puffCount;i++){
+        puffs.push({
+          ox:(i/(puffCount-1||1))*w*(0.8+Math.random()*0.4)-w*0.1,
+          oy:(Math.random()-0.5)*h*0.5,
+          rx:w*0.12+Math.random()*w*0.15,
+          ry:h*(0.3+Math.random()*0.4),
+          alpha:0.65+Math.random()*0.35
+        });
+      }
+      return {
+        x:Math.random()*W*2.8, y:12+Math.random()*105,
+        w, h, puffs,
+        speed:0.18+Math.random()*0.45,
+        layer:Math.random()<0.38?0:1,
+        opacity:0.5+Math.random()*0.45
+      };
+    });
+  }
+
   _genTrees(n){
     return Array.from({length:n},(_,i)=>({
       x:(i/n)*W*3+Math.random()*90,
-      h:20+Math.random()*38, w:8+Math.random()*10,
-      type:Math.floor(Math.random()*3)
+      h:22+Math.random()*42, w:7+Math.random()*11,
+      type:Math.floor(Math.random()*3),
+      tilt:(Math.random()-0.5)*0.08
     }));
   }
+
   update(dt,speed){
-    this.scroll[0]+=speed*0.04*dt;
-    this.scroll[1]+=speed*0.10*dt;
-    this.scroll[2]+=speed*0.18*dt;
-    this.scroll[3]+=speed*0.40*dt;
-    this.scroll[4]+=speed*0.70*dt;
+    this.scroll[0]+=speed*0.035*dt;
+    this.scroll[1]+=speed*0.09*dt;
+    this.scroll[2]+=speed*0.17*dt;
+    this.scroll[3]+=speed*0.38*dt;
+    this.scroll[4]+=speed*0.68*dt;
     this.scroll[5]+=speed*1.0*dt;
+    this._sunAngle+=dt*0.012;
   }
+
   draw(t,score){
     const ctx=this.ctx, night=this.isNight;
     const sky=this.dn.getSkyColors(score||0);
+    const sunPhase=score/DNI; // 0..6 cycle
+    // Sun position: rises from right-ish, sets toward horizon
+    const dayFrac=(sunPhase%1);
+    const sunX=W*(0.78+Math.sin(dayFrac*Math.PI*0.3)*0.12);
+    const sunY=GY*(sky.sunY||0.15);
 
-    // ── Sky gradient ──
+    // ── Sky gradient with scattering layers ──
     const sg=ctx.createLinearGradient(0,0,0,GY);
     sg.addColorStop(0,sky.top);
-    sg.addColorStop(0.55,sky.horizon);
-    sg.addColorStop(1,lerpColor(sky.horizon,sky.sun,0.6));
+    sg.addColorStop(0.42,sky.horizon);
+    sg.addColorStop(0.78,lerpColor(sky.horizon,sky.sun,0.55));
+    sg.addColorStop(1,lerpColor(sky.sun,'#ffcc88',0.35));
     ctx.fillStyle=sg; ctx.fillRect(0,0,W,GY);
 
-    // ── Sun/Moon ──
-    const sunX=W*0.82, sunY=sky.sunY*GY;
+    // ── Atmospheric scattering near horizon ──
     if(!sky.isNight){
-      // Sun multi-layer glow
-      for(let i=3;i>=0;i--){
-        const r=[90,60,40,22][i], a=[0.06,0.12,0.25,1][i];
-        const col=i===3?sky.sun:`rgba(255,200,80,${a})`;
-        if(i<3){
-          const glow=ctx.createRadialGradient(sunX,sunY,0,sunX,sunY,r);
-          glow.addColorStop(0,`rgba(255,220,120,${a})`);
-          glow.addColorStop(1,'transparent');
-          ctx.fillStyle=glow;
-        } else {
-          const sg2=ctx.createRadialGradient(sunX-5,sunY-5,0,sunX,sunY,r);
-          sg2.addColorStop(0,'#fff8e0'); sg2.addColorStop(0.3,sky.sun); sg2.addColorStop(1,'rgba(255,150,0,0.5)');
-          ctx.fillStyle=sg2;
-        }
-        ctx.beginPath();ctx.arc(sunX,sunY,r,0,Math.PI*2);ctx.fill();
-      }
-      // Sun rays
-      ctx.save();ctx.globalAlpha=0.08;
-      for(let i=0;i<12;i++){
-        const a=(i/12)*Math.PI*2+t*0.1;
-        ctx.fillStyle=sky.sun;
-        ctx.beginPath();
-        ctx.moveTo(sunX,sunY);
-        ctx.lineTo(sunX+Math.cos(a)*110,sunY+Math.sin(a)*110);
-        ctx.lineTo(sunX+Math.cos(a+0.12)*90,sunY+Math.sin(a+0.12)*90);
-        ctx.closePath();ctx.fill();
-      }
-      ctx.restore();
+      const scatH=ctx.createLinearGradient(0,GY-55,0,GY);
+      scatH.addColorStop(0,'transparent');
+      scatH.addColorStop(1,`rgba(255,220,140,0.22)`);
+      ctx.fillStyle=scatH; ctx.fillRect(0,GY-55,W,55);
+    }
+
+    // ── Sun ──
+    if(!sky.isNight){
+      this._drawSun(ctx,sunX,sunY,sky,t);
     } else {
-      // Moon
-      const mx=sunX, my=sunY;
-      const moonG=ctx.createRadialGradient(mx-5,my-5,0,mx,my,24);
-      moonG.addColorStop(0,'#f8f4ff'); moonG.addColorStop(0.5,'#d0d8ff'); moonG.addColorStop(1,'#8090c0');
-      const moonGlow=ctx.createRadialGradient(mx,my,0,mx,my,80);
-      moonGlow.addColorStop(0,'rgba(120,140,220,0.15)'); moonGlow.addColorStop(1,'transparent');
-      ctx.fillStyle=moonGlow; ctx.beginPath();ctx.arc(mx,my,80,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle=moonG; ctx.beginPath();ctx.arc(mx,my,22,0,Math.PI*2);ctx.fill();
-      [[mx-7,my+5,5],[mx+8,my-6,3],[mx+3,my+10,3.5]].forEach(([cx,cy,cr])=>{
-        ctx.fillStyle='rgba(100,120,180,0.22)';ctx.beginPath();ctx.arc(cx,cy,cr,0,Math.PI*2);ctx.fill();
-      });
-      // Stars
+      // Night: stars + moon
       for(const s of this.stars){
-        const blink=0.5+0.5*Math.sin((t/s.tw+s.tp)*Math.PI*2);
-        ctx.globalAlpha=0.2+blink*0.8;
-        ctx.fillStyle='#fff';
+        const blink=0.45+0.55*Math.sin((t/s.tw+s.tp)*Math.PI*2);
+        ctx.globalAlpha=(0.15+blink*0.85)*Math.min(1,sky.nightAlpha||1);
+        ctx.fillStyle=s.col;
         ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();
       }
       ctx.globalAlpha=1;
+      this._drawMoon(ctx,sunX,sunY,sky,t);
     }
 
-    // ── Volumetric horizon haze ──
-    const hazeG=ctx.createLinearGradient(0,GY-70,0,GY);
-    hazeG.addColorStop(0,'transparent');
-    hazeG.addColorStop(0.4,night?'rgba(20,10,40,0.1)':'rgba(255,200,100,0.1)');
-    hazeG.addColorStop(1,night?'rgba(20,10,40,0.55)':'rgba(255,210,140,0.45)');
-    ctx.fillStyle=hazeG; ctx.fillRect(0,GY-70,W,70);
+    // ── Far mountains ──
+    const atmFar=night?0.6:0.7;
+    const atmFarCol=night?'rgba(14,10,32,':'rgba(110,135,168,';
+    const atmFarShad=night?'rgba(8,6,22,':'rgba(82,108,140,';
+    this._drawRealisticMtns(this.mtnsFar,this.scroll[0],W*3,atmFarCol,atmFarShad,atmFar,sky,sunX,sunY,night,0.85);
 
-    // ── Far mountains (deepest) ──
-    this._drawMtns(this.mtnsFar,this.scroll[0],W*2.5,
-      night?'rgba(18,12,40,0.8)':'rgba(120,145,175,0.75)',
-      night?'rgba(12,8,28,0.85)':'rgba(90,115,148,0.8)',0.65);
-
-    // ── Back clouds (far layer) ──
+    // ── Back clouds ──
     for(const c of this.clouds){
       if(c.layer!==0) continue;
-      const cx=((c.x-this.scroll[2]*c.speed*0.6)%(W*2.5)+W*2.5)%(W*2.5)-120;
-      if(cx>W+130||cx<-130) continue;
-      this._drawCloud(cx,c.y,c.w*0.7,c.h*0.7,night,0.55);
+      const cx=((c.x-this.scroll[2]*c.speed*0.55)%(W*2.8)+W*2.8)%(W*2.8)-150;
+      if(cx>W+160||cx<-160) continue;
+      this._drawVolumetricCloud(ctx,cx,c.y,c.w*0.65,c.h*0.65,c.puffs,night,c.opacity*0.55,sky,sunX,sunY);
     }
 
     // ── Mid mountains ──
-    this._drawMtns(this.mtnsMid,this.scroll[1],W*2,
-      night?'rgba(30,20,60,0.9)':'rgba(160,190,210,0.85)',
-      night?'rgba(20,14,45,0.9)':'rgba(125,158,185,0.9)',0.88);
+    const atmMid=night?0.82:0.88;
+    const atmMidCol=night?'rgba(24,16,52,':'rgba(148,178,200,';
+    const atmMidShad=night?'rgba(14,10,38,':'rgba(115,148,174,';
+    this._drawRealisticMtns(this.mtnsMid,this.scroll[1],W*2.2,atmMidCol,atmMidShad,atmMid,sky,sunX,sunY,night,0.72);
 
     // ── Front clouds ──
     for(const c of this.clouds){
       if(c.layer!==1) continue;
-      const cx=((c.x-this.scroll[2]*c.speed)%(W*2.5)+W*2.5)%(W*2.5)-120;
-      if(cx>W+130||cx<-130) continue;
-      this._drawCloud(cx,c.y,c.w,c.h,night,0.92);
+      const cx=((c.x-this.scroll[2]*c.speed)%(W*2.8)+W*2.8)%(W*2.8)-150;
+      if(cx>W+160||cx<-160) continue;
+      this._drawVolumetricCloud(ctx,cx,c.y,c.w,c.h,c.puffs,night,c.opacity*0.92,sky,sunX,sunY);
     }
 
     // ── Near hills ──
-    this._drawMtns(this.mtnsNear,this.scroll[2],W*1.5,
-      night?'rgba(20,30,20,0.95)':'rgba(80,110,70,0.9)',
-      night?'rgba(14,22,14,0.95)':'rgba(60,85,50,0.95)',0.95);
+    const atmNear=night?0.92:0.94;
+    const atmNearCol=night?'rgba(15,22,15,':'rgba(68,98,58,';
+    const atmNearShad=night?'rgba(10,16,10,':'rgba(50,74,42,';
+    this._drawRealisticMtns(this.mtnsNear,this.scroll[2],W*1.6,atmNearCol,atmNearShad,atmNear,sky,sunX,sunY,night,0.55);
 
-    // ── Distant trees/forest silhouette ──
-    this._drawForest(this.scroll[3],night);
+    // ── Distant trees/forest ──
+    this._drawForest(this.scroll[3],night,sky,sunX);
 
     // ── Ground ──
-    this._drawGround(night,sky);
-
-    // ── Ground dust ──
-    ctx.fillStyle=night?'rgba(60,80,120,0.15)':'rgba(0,0,0,0.05)';
-    for(const d of this.groundDust){
-      const dx=((d.x-this.scroll[5])%(W*3)+W*3)%(W*3)-50;
-      if(dx<-10||dx>W+10) continue;
-      ctx.beginPath();ctx.ellipse(dx,d.y,d.r*2,d.r*0.5,0,0,Math.PI*2);ctx.fill();
-    }
+    this._drawGround(night,sky,sunX,sunY,t);
   }
 
-  _drawMtns(mtns,scroll,wrap,fillCol,shadowCol,alpha){
+  _drawSun(ctx,sx,sy,sky,t){
+    // Atmospheric lens bloom (outermost, faintest)
+    const bloom=ctx.createRadialGradient(sx,sy,0,sx,sy,120);
+    bloom.addColorStop(0,`rgba(255,230,150,0.12)`);
+    bloom.addColorStop(0.4,`rgba(255,180,80,0.07)`);
+    bloom.addColorStop(1,'transparent');
+    ctx.fillStyle=bloom; ctx.beginPath();ctx.arc(sx,sy,120,0,Math.PI*2);ctx.fill();
+
+    // Corona
+    const corona=ctx.createRadialGradient(sx,sy,16,sx,sy,65);
+    corona.addColorStop(0,`rgba(255,220,130,0.28)`);
+    corona.addColorStop(0.5,`rgba(255,180,60,0.14)`);
+    corona.addColorStop(1,'transparent');
+    ctx.fillStyle=corona; ctx.beginPath();ctx.arc(sx,sy,65,0,Math.PI*2);ctx.fill();
+
+    // Solar disc — off-center bright spot simulates limb darkening
+    const disc=ctx.createRadialGradient(sx-4,sy-4,0,sx,sy,20);
+    disc.addColorStop(0,'#fffae8');
+    disc.addColorStop(0.25,sky.sun||'#ffe080');
+    disc.addColorStop(0.7,`rgba(255,160,40,0.92)`);
+    disc.addColorStop(1,`rgba(255,120,20,0.6)`);
+    ctx.fillStyle=disc; ctx.beginPath();ctx.arc(sx,sy,20,0,Math.PI*2);ctx.fill();
+
+    // Subtle volumetric rays (low alpha, wide)
+    ctx.save(); ctx.globalAlpha=0.045;
+    const rayCount=16;
+    for(let i=0;i<rayCount;i++){
+      const a=(i/rayCount)*Math.PI*2+t*0.04;
+      const len=80+Math.sin(t*0.7+i)*20;
+      ctx.fillStyle=sky.sun||'#ffe080';
+      ctx.beginPath();
+      ctx.moveTo(sx,sy);
+      ctx.lineTo(sx+Math.cos(a-0.07)*len,sy+Math.sin(a-0.07)*len);
+      ctx.lineTo(sx+Math.cos(a+0.07)*len,sy+Math.sin(a+0.07)*len);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  _drawMoon(ctx,mx,my,sky,t){
+    // Distant glow halo
+    const moonHalo=ctx.createRadialGradient(mx,my,0,mx,my,75);
+    moonHalo.addColorStop(0,'rgba(180,195,240,0.13)');
+    moonHalo.addColorStop(0.5,'rgba(140,160,210,0.07)');
+    moonHalo.addColorStop(1,'transparent');
+    ctx.fillStyle=moonHalo; ctx.beginPath();ctx.arc(mx,my,75,0,Math.PI*2);ctx.fill();
+
+    // Moon disc with limb variation
+    const moonDisc=ctx.createRadialGradient(mx-6,my-6,0,mx,my,23);
+    moonDisc.addColorStop(0,'#fffdf8');
+    moonDisc.addColorStop(0.3,'#e8eeff');
+    moonDisc.addColorStop(0.7,'#c0ccee');
+    moonDisc.addColorStop(1,'#8898cc');
+    ctx.fillStyle=moonDisc; ctx.beginPath();ctx.arc(mx,my,23,0,Math.PI*2);ctx.fill();
+
+    // Mare (dark patches — realistic detail)
+    const mares=[
+      [mx-5,my+4,6.5,4.5],
+      [mx+7,my-5,4,3],
+      [mx+4,my+9,3.5,2.5],
+      [mx-10,my-4,3,2],
+    ];
+    for(const [cx,cy,rx,ry] of mares){
+      ctx.fillStyle='rgba(90,105,150,0.28)';
+      ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.fill();
+    }
+
+    // Phase shadow (waxing gibbous style)
+    ctx.save();
+    ctx.globalCompositeOperation='source-atop';
+    ctx.fillStyle='rgba(10,16,45,0.42)';
+    ctx.beginPath();
+    ctx.ellipse(mx+6,my,16,23,0,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  _drawRealisticMtns(mtns,scroll,wrap,fillPrefix,shadPrefix,alpha,sky,sunX,sunY,night,fogDepth){
     const ctx=this.ctx;
+    // Atmospheric fog factor: distant = more faded
+    const fogCol=night?`rgba(8,6,22,${fogDepth*0.5})`:`rgba(200,215,230,${fogDepth*0.45})`;
+
     ctx.globalAlpha=alpha;
     for(const m of mtns){
-      const mx=((m.x-scroll)%wrap+wrap)%wrap-80;
-      if(mx>W+100||mx<-100) continue;
-      ctx.fillStyle=fillCol;
+      const ox=((m.x-scroll)%wrap+wrap)%wrap-m.w*0.5-20;
+      if(ox>W+120||ox<-m.w-20) continue;
+
+      const base=GY;
+      const pts=m.pts;
+
+      // Main body fill
+      const fillG=ctx.createLinearGradient(ox,base-m.h,ox+m.w,base);
+      if(night){
+        fillG.addColorStop(0,fillPrefix+'0.88)');
+        fillG.addColorStop(0.6,fillPrefix+'0.78)');
+        fillG.addColorStop(1,shadPrefix+'0.92)');
+      } else {
+        // Lit from sun direction
+        const litSide=sunX>ox+m.w/2?1:0;
+        if(litSide){
+          fillG.addColorStop(0,fillPrefix+'0.7)');
+          fillG.addColorStop(0.4,fillPrefix+'0.82)');
+          fillG.addColorStop(1,shadPrefix+'0.9)');
+        } else {
+          fillG.addColorStop(0,shadPrefix+'0.9)');
+          fillG.addColorStop(0.6,fillPrefix+'0.82)');
+          fillG.addColorStop(1,fillPrefix+'0.7)');
+        }
+      }
+      ctx.fillStyle=fillG;
+
       ctx.beginPath();
-      ctx.moveTo(mx-m.w/2,GY);
-      for(let i=0;i<4;i++){
-        const rx=lerp(mx-m.w/2,mx,(i+1)/5);
-        const ry=lerp(GY,GY-m.h,(i+1)/5)-m.jagged[i]*10;
-        ctx.lineTo(rx,ry);
+      ctx.moveTo(ox,base);
+      for(const p of pts){
+        ctx.lineTo(ox+p.x,base-p.y);
       }
-      ctx.lineTo(mx,GY-m.h);
-      for(let i=0;i<4;i++){
-        const rx=lerp(mx,mx+m.w/2,(i+1)/5);
-        const ry=lerp(GY-m.h,GY,(i+1)/5)-m.jagged[i+4]*7;
-        ctx.lineTo(rx,ry);
-      }
-      ctx.lineTo(mx+m.w/2,GY);
-      ctx.closePath();ctx.fill();
-      // Shadow side
-      ctx.fillStyle=shadowCol;
-      ctx.beginPath();ctx.moveTo(mx,GY-m.h);
-      for(let i=0;i<4;i++){
-        const rx=lerp(mx,mx+m.w/2,(i+1)/5);
-        const ry=lerp(GY-m.h,GY,(i+1)/5)-m.jagged[i+4]*7;
-        ctx.lineTo(rx,ry);
-      }
-      ctx.lineTo(mx+m.w/2,GY);
-      ctx.lineTo(mx+m.w*0.12,GY);
-      ctx.closePath();ctx.fill();
-      // Snow cap
-      if(m.snowCap&&m.h>50){
-        ctx.fillStyle='rgba(240,248,255,0.45)';
+      ctx.lineTo(ox+m.w,base);
+      ctx.closePath();
+      ctx.fill();
+
+      // Shadow face (right or left depending on sun)
+      ctx.fillStyle=night?shadPrefix+'0.55)':shadPrefix+'0.48)';
+      const peakPt=pts.reduce((a,b)=>b.y>a.y?b:a,pts[0]);
+      ctx.beginPath();
+      ctx.moveTo(ox+peakPt.x,base-peakPt.y);
+      const fromIdx=pts.indexOf(peakPt);
+      // Right slope
+      for(let i=fromIdx;i<pts.length;i++) ctx.lineTo(ox+pts[i].x,base-pts[i].y);
+      ctx.lineTo(ox+m.w,base);
+      ctx.lineTo(ox+peakPt.x,base);
+      ctx.closePath(); ctx.fill();
+
+      // Snow cap on high peaks
+      if(m.hasSnow && m.h>45){
+        const snowLevel=0.78;
+        ctx.fillStyle=night?'rgba(200,210,235,0.38)':'rgba(248,252,255,0.72)';
         ctx.beginPath();
-        ctx.moveTo(mx,GY-m.h);
-        ctx.lineTo(mx-m.w*0.18,GY-m.h*0.75);
-        ctx.lineTo(mx+m.w*0.18,GY-m.h*0.75);
-        ctx.closePath();ctx.fill();
+        let first=true;
+        for(const p of pts){
+          if(p.y>=m.h*snowLevel){
+            if(first){ctx.moveTo(ox+p.x,base-p.y);first=false;}
+            else ctx.lineTo(ox+p.x,base-p.y);
+          }
+        }
+        if(!first){
+          // close at snow-level altitude
+          const snowY=base-m.h*snowLevel;
+          ctx.lineTo(ox+pts[pts.length-1].x+(pts[pts.length-1].y<m.h*snowLevel?0:0),snowY);
+          ctx.lineTo(ox+pts[0].x,snowY);
+          ctx.closePath();ctx.fill();
+        }
       }
+
+      // Atmospheric depth fog overlay
+      ctx.fillStyle=fogCol;
+      ctx.beginPath();
+      ctx.moveTo(ox,base);
+      for(const p of pts) ctx.lineTo(ox+p.x,base-p.y);
+      ctx.lineTo(ox+m.w,base);
+      ctx.closePath(); ctx.fill();
     }
     ctx.globalAlpha=1;
   }
 
-  _drawCloud(x,y,w,h,night,baseAlpha){
-    const ctx=this.ctx;
-    const a=night?baseAlpha*0.25:baseAlpha;
-    ctx.globalAlpha=a;
-    const puffs=[[x,y+h*0.2,w*0.3,h*0.72],[x+w*0.22,y,w*0.38,h],[x+w*0.56,y+h*0.1,w*0.3,h*0.82],[x+w*0.76,y+h*0.28,w*0.26,h*0.62]];
-    ctx.fillStyle=night?'rgba(70,85,150,0.4)':'rgba(175,180,200,0.5)';
-    puffs.forEach(([px,py,pw,ph])=>{ctx.beginPath();ctx.ellipse(px+pw/2,py+ph/2+5,pw/2,ph/2*0.55,0,0,Math.PI*2);ctx.fill()});
-    puffs.forEach(([px,py,pw,ph])=>{
-      const g=ctx.createRadialGradient(px+pw*0.4,py+ph*0.35,0,px+pw/2,py+ph/2,Math.max(pw,ph)/1.8);
-      g.addColorStop(0,night?'rgba(200,215,255,0.95)':'rgba(255,255,255,1)');
-      g.addColorStop(0.6,night?'rgba(140,165,220,0.7)':'rgba(240,245,255,0.85)');
-      g.addColorStop(1,night?'rgba(80,100,180,0.1)':'rgba(210,220,240,0.2)');
-      ctx.fillStyle=g;
-      ctx.beginPath();ctx.ellipse(px+pw/2,py+ph/2,pw/2,ph/2,0,0,Math.PI*2);ctx.fill();
-    });
-    ctx.globalAlpha=1;
+  _drawVolumetricCloud(ctx,bx,by,bw,bh,puffs,night,alpha,sky,sunX,sunY){
+    if(alpha<0.02) return;
+    ctx.save();
+    ctx.globalAlpha=alpha;
+
+    // Determine sun/light direction for edge lighting
+    const sunDir=sunX<bx+bw/2?-1:1; // 1=sun from right, -1=from left
+
+    // Shadow base (soft flat shadow under cloud)
+    ctx.fillStyle=night?'rgba(40,50,100,0.22)':'rgba(160,170,190,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(bx+bw*0.5,by+bh+7,bw*0.44,bh*0.18,0,0,Math.PI*2);
+    ctx.fill();
+
+    for(const p of puffs){
+      const px=bx+p.ox, py=by+p.oy;
+
+      // Inner dark base (shadow interior of puff)
+      const shadowG=ctx.createRadialGradient(px+p.rx*0.1,py+p.ry*0.45,p.rx*0.05,px,py,Math.max(p.rx,p.ry));
+      if(night){
+        shadowG.addColorStop(0,'rgba(195,210,250,0.75)');
+        shadowG.addColorStop(0.55,'rgba(130,155,220,0.55)');
+        shadowG.addColorStop(1,'rgba(70,90,170,0.08)');
+      } else {
+        shadowG.addColorStop(0,'rgba(255,255,255,0.96)');
+        shadowG.addColorStop(0.4,'rgba(245,248,255,0.85)');
+        shadowG.addColorStop(0.75,'rgba(215,222,240,0.55)');
+        shadowG.addColorStop(1,'rgba(190,200,225,0.08)');
+      }
+      ctx.fillStyle=shadowG;
+      ctx.beginPath();ctx.ellipse(px,py,p.rx,p.ry,0,0,Math.PI*2);ctx.fill();
+
+      // Lit edge on sun-facing side
+      if(!night){
+        ctx.globalAlpha=alpha*0.45;
+        const litEdgeX=px+sunDir*p.rx*0.7;
+        const litG=ctx.createRadialGradient(litEdgeX,py-p.ry*0.4,0,litEdgeX,py-p.ry*0.2,p.rx*0.65);
+        litG.addColorStop(0,'rgba(255,255,255,0.9)');
+        litG.addColorStop(1,'transparent');
+        ctx.fillStyle=litG;
+        ctx.beginPath();ctx.ellipse(litEdgeX,py-p.ry*0.3,p.rx*0.55,p.ry*0.45,0,0,Math.PI*2);ctx.fill();
+        ctx.globalAlpha=alpha;
+      }
+    }
+    ctx.restore();
   }
 
-  _drawForest(scroll,night){
+  _drawForest(scroll,night,sky,sunX){
     const ctx=this.ctx;
     for(const tree of this.trees){
       const wrap=W*3;
       const tx=((tree.x-scroll*0.6)%wrap+wrap)%wrap-30;
-      if(tx<-25||tx>W+25) continue;
+      if(tx<-30||tx>W+30) continue;
       const ty=GY;
-      const col=night?'rgba(12,18,12,0.95)':'rgba(35,65,30,0.75)';
-      ctx.fillStyle=col;
+
+      // Atmospheric fog on trees
+      const fogAmt=0.12;
+      const treeCol=night
+        ?`rgba(8,14,8,0.92)`
+        :`rgba(${32+Math.floor(fogAmt*80)},${58+Math.floor(fogAmt*60)},${25+Math.floor(fogAmt*50)},0.82)`;
+      ctx.fillStyle=treeCol;
+
+      ctx.save();
+      ctx.translate(tx,ty);ctx.rotate(tree.tilt||0);
+
       if(tree.type===0){
-        // Pine tree
-        ctx.beginPath();
-        ctx.moveTo(tx,ty-tree.h);
-        ctx.lineTo(tx-tree.w/2,ty);
-        ctx.lineTo(tx+tree.w/2,ty);
-        ctx.closePath();ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(tx,ty-tree.h*1.35);
-        ctx.lineTo(tx-tree.w*0.4,ty-tree.h*0.55);
-        ctx.lineTo(tx+tree.w*0.4,ty-tree.h*0.55);
-        ctx.closePath();ctx.fill();
+        // Realistic pine: layered tiers
+        for(let tier=0;tier<3;tier++){
+          const tw2=tree.w*(0.85-tier*0.18);
+          const th2=tree.h*(0.4-tier*0.06);
+          const ty2=-tree.h*(0.35+tier*0.28);
+          ctx.beginPath();ctx.moveTo(0,ty2-th2);ctx.lineTo(-tw2/2,ty2);ctx.lineTo(tw2/2,ty2);ctx.closePath();ctx.fill();
+        }
+        // Trunk
+        ctx.fillStyle=night?'rgba(15,10,8,0.7)':'rgba(50,30,15,0.65)';
+        ctx.fillRect(-tree.w*0.08,0,tree.w*0.16,-tree.h*0.2);
       } else if(tree.type===1){
-        // Round tree
-        ctx.beginPath();ctx.arc(tx,ty-tree.h*0.55,tree.w*0.55,0,Math.PI*2);ctx.fill();
-        ctx.fillRect(tx-tree.w*0.12,ty-tree.h*0.25,tree.w*0.24,tree.h*0.3);
+        // Broadleaf with canopy variation
+        const jitter=(Math.sin(tree.x)*0.5+0.5);
+        ctx.beginPath();ctx.ellipse(0,-tree.h*0.55,tree.w*0.5*(0.9+jitter*0.2),tree.h*0.45,0,0,Math.PI*2);ctx.fill();
+        ctx.beginPath();ctx.ellipse(-tree.w*0.22,-tree.h*0.5,tree.w*0.35,tree.h*0.35,0,0,Math.PI*2);ctx.fill();
+        ctx.beginPath();ctx.ellipse(tree.w*0.2,-tree.h*0.48,tree.w*0.32,tree.h*0.33,0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle=night?'rgba(10,8,5,0.5)':'rgba(38,22,10,0.55)';
+        ctx.fillRect(-tree.w*0.1,0,tree.w*0.2,-tree.h*0.28);
       } else {
-        // Desert cactus silhouette
-        ctx.fillRect(tx-4,ty-tree.h,8,tree.h);
-        ctx.fillRect(tx-13,ty-tree.h*0.62,14,5);
-        ctx.fillRect(tx-13,ty-tree.h*0.62-8,5,10);
-        ctx.fillRect(tx+3,ty-tree.h*0.55,14,5);
-        ctx.fillRect(tx+8,ty-tree.h*0.55-7,5,9);
+        // Desert scrub / cactus silhouette
+        ctx.fillRect(-3,-tree.h,6,tree.h);
+        ctx.fillRect(-12,-tree.h*0.6,12,4);
+        ctx.fillRect(-12,-tree.h*0.6-7,4,9);
+        ctx.fillRect(3,-tree.h*0.52,11,4);
+        ctx.fillRect(10,-tree.h*0.52-6,4,8);
       }
+      ctx.restore();
     }
   }
 
-  _drawGround(night,sky){
+  _drawGround(night,sky,sunX,sunY,t){
     const ctx=this.ctx;
-    const gTop=night?'#1c2535':'#c4a265';
-    const gMid=night?'#141c2a':'#b89055';
-    const gBot=night?'#0e1420':'#a07840';
-    const gLine=night?'#283548':'#886030';
-    const gg=ctx.createLinearGradient(0,GY,0,H);
-    gg.addColorStop(0,gTop); gg.addColorStop(0.28,gMid); gg.addColorStop(1,gBot);
-    ctx.fillStyle=gg;ctx.fillRect(0,GY,W,H-GY);
-    // Edge highlight
-    const eg=ctx.createLinearGradient(0,GY-1,0,GY+4);
-    eg.addColorStop(0,night?'rgba(100,160,255,0.35)':'rgba(255,220,100,0.45)');
-    eg.addColorStop(1,'transparent');
-    ctx.fillStyle=eg;ctx.fillRect(0,GY-1,W,5);
-    ctx.strokeStyle=gLine;ctx.lineWidth=2;
-    ctx.beginPath();ctx.moveTo(0,GY);ctx.lineTo(W,GY);ctx.stroke();
-    // Ground lines
-    ctx.globalAlpha=0.18;
-    [GY+9,GY+20,GY+36].forEach(ly=>{
-      ctx.strokeStyle=gLine;ctx.lineWidth=0.8;
-      ctx.beginPath();ctx.moveTo(0,ly);ctx.lineTo(W,ly);ctx.stroke();
-    });
+
+    // --- Base soil color with natural variation ---
+    const horizonY=GY;
+    const gBot=H;
+
+    if(night){
+      const gg=ctx.createLinearGradient(0,horizonY,0,gBot);
+      gg.addColorStop(0,'#1a2436'); gg.addColorStop(0.22,'#131c2c'); gg.addColorStop(0.6,'#0e1520'); gg.addColorStop(1,'#08101a');
+      ctx.fillStyle=gg; ctx.fillRect(0,horizonY,W,gBot-horizonY);
+    } else {
+      // Day: warm desert earth with color variation
+      const gg=ctx.createLinearGradient(0,horizonY,0,gBot);
+      gg.addColorStop(0,'#c8a468'); gg.addColorStop(0.15,'#b89252'); gg.addColorStop(0.4,'#a87c3e'); gg.addColorStop(0.8,'#8e6830'); gg.addColorStop(1,'#7a5828');
+      ctx.fillStyle=gg; ctx.fillRect(0,horizonY,W,gBot-horizonY);
+
+      // Lateral color bands (soil variation)
+      ctx.globalAlpha=0.06;
+      for(let i=0;i<3;i++){
+        const bx=(this.scroll[5]*0.3+i*330)%(W+200)-100;
+        const bw=120+i*60;
+        const bg=ctx.createLinearGradient(bx,0,bx+bw,0);
+        bg.addColorStop(0,'transparent');
+        bg.addColorStop(0.5,'rgba(160,100,40,1)');
+        bg.addColorStop(1,'transparent');
+        ctx.fillStyle=bg; ctx.fillRect(bx,horizonY,bw,gBot-horizonY);
+      }
+      ctx.globalAlpha=1;
+    }
+
+    // --- Contact line: lit edge at horizon ---
+    const edgeG=ctx.createLinearGradient(0,horizonY-3,0,horizonY+6);
+    edgeG.addColorStop(0,night?'rgba(80,130,220,0.5)':'rgba(255,230,140,0.6)');
+    edgeG.addColorStop(0.45,night?'rgba(60,100,180,0.18)':'rgba(200,160,60,0.22)');
+    edgeG.addColorStop(1,'transparent');
+    ctx.fillStyle=edgeG; ctx.fillRect(0,horizonY-3,W,9);
+
+    // --- Ground surface line ---
+    ctx.strokeStyle=night?'rgba(38,60,90,0.9)':'rgba(100,72,30,0.85)';
+    ctx.lineWidth=1.8;
+    ctx.beginPath();ctx.moveTo(0,horizonY);ctx.lineTo(W,horizonY);ctx.stroke();
+
+    // --- Tire / track lines (perspective-converging) ---
+    // Two parallel tracks that converge toward horizon using perspective
+    const vp={x:W*0.5,y:horizonY}; // vanishing point at center horizon
+    const trackOffsets=[-22,22]; // ground width of tracks
+    ctx.globalAlpha=0.14;
+    ctx.strokeStyle=night?'rgba(30,50,80,1)':'rgba(80,55,20,1)';
+    for(const off of trackOffsets){
+      // At screen bottom, track is wider apart; converges at horizon
+      const nearX=vp.x+off*3.5;
+      const farX=vp.x+off*0.22;
+      const tScroll=(this.scroll[5]*0.65)%(W*2);
+      ctx.lineWidth=1.5;
+      ctx.beginPath();
+      ctx.moveTo(nearX-tScroll%80,gBot);
+      ctx.lineTo(farX,horizonY+2);
+      ctx.stroke();
+      // Dashes in track
+      for(let d=0;d<8;d++){
+        const df=d/8;
+        const dashX=lerp(nearX,farX,df)-tScroll*(1-df)*0.12;
+        const dashY=lerp(gBot,horizonY+3,df);
+        const dashW=lerp(18,3,df);
+        ctx.lineWidth=lerp(1.4,0.5,df);
+        ctx.beginPath();ctx.moveTo(dashX,dashY);ctx.lineTo(dashX+dashW,dashY);ctx.stroke();
+      }
+    }
     ctx.globalAlpha=1;
+
+    // --- Pebbles / ground debris with perspective scaling ---
+    for(const p of this.groundPebbles){
+      const wrap=W*3.5;
+      const px=((p.x-this.scroll[5]*0.95)%wrap+wrap)%wrap-20;
+      if(px<-15||px>W+15) continue;
+      // Perspective: objects further up (closer to GY) are smaller
+      const depthT=clamp((p.y-GY)/(H-GY),0,1);
+      const scale=lerp(0.2,1.0,depthT);
+      const pyReal=p.y;
+      const brightness=night?(0.22+p.val*0.18):(0.55+p.val*0.3);
+      const rCol=night?`rgba(${Math.floor(38*brightness)},${Math.floor(58*brightness)},${Math.floor(88*brightness)},0.7)`
+                      :`rgba(${Math.floor(170*brightness)},${Math.floor(138*brightness)},${Math.floor(92*brightness)},0.72)`;
+      ctx.fillStyle=rCol;
+      ctx.beginPath();ctx.ellipse(px,pyReal,p.rx*scale,p.ry*scale,p.tilt,0,Math.PI*2);ctx.fill();
+      // Highlight facet
+      ctx.fillStyle=night?'rgba(90,130,200,0.12)':'rgba(255,255,220,0.22)';
+      ctx.beginPath();ctx.ellipse(px-p.rx*scale*0.2,pyReal-p.ry*scale*0.25,p.rx*scale*0.45,p.ry*scale*0.3,p.tilt,0,Math.PI*2);ctx.fill();
+      // Contact shadow below pebble
+      ctx.fillStyle='rgba(0,0,0,0.11)';
+      ctx.beginPath();ctx.ellipse(px,pyReal+p.ry*scale*0.7,p.rx*scale*0.8,p.ry*scale*0.18,0,0,Math.PI*2);ctx.fill();
+    }
+
+    // --- Distant ground haze / atmospheric perspective ---
+    const groundHaze=ctx.createLinearGradient(0,horizonY,0,horizonY+30);
+    groundHaze.addColorStop(0,night?'rgba(14,20,40,0.55)':'rgba(210,190,140,0.42)');
+    groundHaze.addColorStop(1,'transparent');
+    ctx.fillStyle=groundHaze; ctx.fillRect(0,horizonY,W,30);
+
+    // --- Shadow from sun cast across ground plane ---
+    if(!night){
+      // Long ground shadow going left (sun from right)
+      const shadowG=ctx.createLinearGradient(W*0.45,horizonY,0,horizonY+GH*0.5);
+      shadowG.addColorStop(0,'transparent');
+      shadowG.addColorStop(0.5,'rgba(0,0,0,0.05)');
+      shadowG.addColorStop(1,'transparent');
+      ctx.fillStyle=shadowG;
+      ctx.fillRect(0,horizonY,W*0.6,GH*0.5);
+    }
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  GROUND DETAILS
+//  GROUND DETAILS — Perspective-accurate surface layer
 // ═══════════════════════════════════════════════════════════════
 class GroundDetails {
   constructor(ctx){
     this.ctx=ctx; this.scrollX=0;
-    this.details=Array.from({length:120},()=>({x:Math.random()*W*3,type:Math.floor(Math.random()*4),s:0.8+Math.random()*3,h:1+Math.random()*2}));
-    this.rocks=Array.from({length:35},()=>({x:Math.random()*W*3,w:5+Math.random()*14,h:3+Math.random()*7}));
+    // Ground surface markings near the dino's plane
+    this.details=Array.from({length:100},()=>({
+      x:Math.random()*W*3,
+      type:Math.floor(Math.random()*5),
+      s:0.6+Math.random()*2.8,
+      h:0.8+Math.random()*2.2,
+      depth:0.05+Math.random()*0.7  // 0=near horizon,1=near camera
+    }));
+    this.rocks=Array.from({length:28},()=>({
+      x:Math.random()*W*3,
+      w:4+Math.random()*12,
+      h:2.5+Math.random()*6,
+      depth:0.1+Math.random()*0.85,
+      tilt:(Math.random()-0.5)*0.25,
+      val:0.5+Math.random()*0.45
+    }));
+    // Dust accumulation patches near ground line
+    this.dustPatches=Array.from({length:20},()=>({
+      x:Math.random()*W*3,
+      rx:12+Math.random()*35,
+      ry:2+Math.random()*4,
+      alpha:0.04+Math.random()*0.12
+    }));
   }
   update(dt,speed){this.scrollX=(this.scrollX+speed*dt)%(W*3)}
   draw(isNight){
-    const ctx=this.ctx, col=isNight?'#2a3c52':'#8a6a38';
-    ctx.fillStyle=col; ctx.strokeStyle=col;
+    const ctx=this.ctx;
+    const horizonY=GY;
+
+    // --- Ground markings scaled by depth / perspective ---
     for(const d of this.details){
-      const wrap=W*3,dx=((d.x-this.scrollX)%wrap+wrap)%wrap-40;
-      if(dx<-20||dx>W+20) continue;
-      const dy=GY+5; ctx.globalAlpha=0.55;
+      const wrap=W*3;
+      const dx=((d.x-this.scrollX)%wrap+wrap)%wrap-40;
+      if(dx<-25||dx>W+25) continue;
+      // Perspective: depth 0 = near horizon (small), depth 1 = near camera (full size)
+      const scale=lerp(0.08,1.0,d.depth);
+      const dy=lerp(horizonY+1,GY+GH-8,d.depth);
+      const col=isNight?`rgba(42,62,88,${0.4*scale+0.1})`:`rgba(138,104,56,${0.5*scale+0.1})`;
+      ctx.fillStyle=col;
+      ctx.strokeStyle=col;
+      ctx.globalAlpha=Math.min(1,0.45*scale+0.12);
       switch(d.type){
-        case 0:
-          ctx.beginPath();ctx.ellipse(dx,dy+d.s,d.s*1.6,d.s*0.65,0,0,Math.PI*2);ctx.fill();
-          ctx.fillStyle=isNight?'#3a4e64':'#a08050';ctx.globalAlpha=0.28;
-          ctx.beginPath();ctx.ellipse(dx-1,dy+d.s-1,d.s*0.7,d.s*0.4,0,0,Math.PI*2);ctx.fill();
-          ctx.fillStyle=col;break;
-        case 1:
-          ctx.lineWidth=0.8;ctx.beginPath();ctx.moveTo(dx,dy);ctx.lineTo(dx+d.s*3.5,dy+d.h*2.5);ctx.lineTo(dx+d.s*5.5,dy+d.h);ctx.stroke();break;
-        case 2:
-          ctx.lineWidth=1.3;
-          for(let i=0;i<4;i++){ctx.beginPath();ctx.moveTo(dx+i*4,dy+2);ctx.bezierCurveTo(dx+i*4-3,dy-3,dx+i*4-1,dy-7,dx+i*4+1,dy-8);ctx.stroke()}
+        case 0: // pebble cluster
+          ctx.beginPath();ctx.ellipse(dx,dy,d.s*scale*1.4,d.s*scale*0.55,0,0,Math.PI*2);ctx.fill();
           break;
-        case 3:
-          ctx.lineWidth=1;ctx.globalAlpha=0.28;ctx.beginPath();ctx.moveTo(dx,dy+2);ctx.lineTo(dx+d.s*8,dy+2);ctx.stroke();break;
+        case 1: // crack line
+          ctx.lineWidth=0.7*scale;
+          ctx.beginPath();ctx.moveTo(dx,dy);ctx.lineTo(dx+d.s*3*scale,dy+d.h*2*scale);ctx.lineTo(dx+d.s*5*scale,dy+d.h*0.8*scale);ctx.stroke();
+          break;
+        case 2: // dry grass tuft
+          ctx.lineWidth=1.0*scale;
+          for(let i=0;i<3;i++){
+            ctx.beginPath();ctx.moveTo(dx+i*3*scale,dy);
+            ctx.bezierCurveTo(dx+i*3*scale-2*scale,dy-4*scale,dx+i*3*scale-1*scale,dy-7*scale,dx+i*3*scale+1*scale,dy-8*scale);
+            ctx.stroke();
+          }
+          break;
+        case 3: // flat dust line
+          ctx.globalAlpha=0.18*scale;
+          ctx.lineWidth=0.8*scale;
+          ctx.beginPath();ctx.moveTo(dx,dy+1);ctx.lineTo(dx+d.s*7*scale,dy+1);ctx.stroke();
+          break;
+        case 4: // embedded stone
+          ctx.beginPath();ctx.ellipse(dx,dy+d.s*0.3*scale,d.s*scale*2,d.s*scale*0.65,0,0,Math.PI*2);ctx.fill();
+          ctx.fillStyle=isNight?'rgba(80,120,180,0.12)':'rgba(255,240,200,0.18)';
+          ctx.beginPath();ctx.ellipse(dx-d.s*0.2*scale,dy-d.s*0.2*scale,d.s*scale*0.85,d.s*scale*0.35,0,0,Math.PI*2);ctx.fill();
+          break;
       }
       ctx.globalAlpha=1;
     }
+
+    // --- Rocks with perspective, specular, shadow ---
     for(const r of this.rocks){
-      const wrap=W*3,rx=((r.x-this.scrollX*0.8)%wrap+wrap)%wrap-40;
-      if(rx<-20||rx>W+20) continue;
-      const ry=GY+3;
-      const rg=ctx.createRadialGradient(rx+r.w*0.3,ry,0,rx+r.w/2,ry+r.h/2,Math.max(r.w,r.h));
-      rg.addColorStop(0,isNight?'#3a4c64':'#b09078');
-      rg.addColorStop(1,isNight?'#1a2535':'#806050');
-      ctx.fillStyle=rg;ctx.beginPath();ctx.ellipse(rx+r.w/2,ry+r.h/2,r.w/2,r.h/2,0,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle=isNight?'rgba(100,150,220,0.18)':'rgba(255,255,255,0.22)';
-      ctx.beginPath();ctx.ellipse(rx+r.w*0.3,ry+r.h*0.25,r.w*0.25,r.h*0.2,0,0,Math.PI*2);ctx.fill();
+      const wrap=W*3;
+      const rx=((r.x-this.scrollX*0.85)%wrap+wrap)%wrap-40;
+      if(rx<-25||rx>W+25) continue;
+      const scale=lerp(0.07,1.0,r.depth);
+      const ry=lerp(GY+2,GY+GH*0.75,r.depth);
+      const rw=r.w*scale, rh=r.h*scale;
+
+      // Contact shadow (flat ellipse below rock)
+      ctx.fillStyle='rgba(0,0,0,0.14)';
+      ctx.beginPath();ctx.ellipse(rx,ry+rh*0.7,rw*0.85,rh*0.22,0,0,Math.PI*2);ctx.fill();
+
+      // Rock body gradient
+      const rg=ctx.createRadialGradient(rx-rw*0.2,ry-rh*0.25,0,rx,ry,Math.max(rw,rh));
+      if(isNight){
+        rg.addColorStop(0,`rgba(${Math.floor(55*r.val)},${Math.floor(75*r.val)},${Math.floor(110*r.val)},0.9)`);
+        rg.addColorStop(0.65,`rgba(${Math.floor(30*r.val)},${Math.floor(46*r.val)},${Math.floor(72*r.val)},0.88)`);
+        rg.addColorStop(1,`rgba(14,22,38,0.85)`);
+      } else {
+        rg.addColorStop(0,`rgba(${Math.floor(190*r.val)},${Math.floor(160*r.val)},${Math.floor(120*r.val)},0.92)`);
+        rg.addColorStop(0.6,`rgba(${Math.floor(148*r.val)},${Math.floor(118*r.val)},${Math.floor(82*r.val)},0.88)`);
+        rg.addColorStop(1,`rgba(90,68,42,0.85)`);
+      }
+      ctx.fillStyle=rg;
+      ctx.beginPath();ctx.ellipse(rx,ry,rw,rh,r.tilt,0,Math.PI*2);ctx.fill();
+
+      // Specular highlight facet
+      ctx.fillStyle=isNight?'rgba(110,155,220,0.22)':'rgba(255,248,220,0.3)';
+      ctx.beginPath();ctx.ellipse(rx-rw*0.22,ry-rh*0.28,rw*0.32,rh*0.22,r.tilt,0,Math.PI*2);ctx.fill();
+    }
+
+    // --- Dust accumulation near ground line ---
+    for(const d of this.dustPatches){
+      const wrap=W*3;
+      const px=((d.x-this.scrollX*0.9)%wrap+wrap)%wrap-50;
+      if(px<-60||px>W+60) continue;
+      ctx.fillStyle=isNight?`rgba(50,70,110,${d.alpha})`:`rgba(180,148,88,${d.alpha})`;
+      ctx.beginPath();ctx.ellipse(px,GY+1.5,d.rx,d.ry,0,0,Math.PI*2);ctx.fill();
     }
   }
 }
@@ -1256,22 +1611,31 @@ class Dino {
       scale :night?'#38a0cc':'#2e6838',claw :night?'#1a4878':'#1a3020',
       eye   :night?'#0a2848':'#0a1810',iris :night?'#1a92ff':'#206030',
     };
-    // Drop shadow
-    const sw=this.W*(this.onGround?0.68:0.35);
-    const sg=ctx.createRadialGradient(this.x+this.W/2,GY+5,0,this.x+this.W/2,GY+5,sw);
-    sg.addColorStop(0,night?'rgba(20,100,220,0.28)':'rgba(0,0,0,0.22)');
+
+    // --- Physically grounded shadow: cast from sun (upper right = day, upper left = night) ---
+    // Shadow is an ellipse on the ground plane that grows when jumping
+    const shadowW=this.W*(this.onGround?0.58:0.28);
+    const shadowH=this.onGround?5.5:2.5;
+    const shadowOffX=this.onGround?0:clamp((GY-this.y-this.H)*0.22,0,30); // shifts right as jumping
+    const shadowAlpha=this.onGround?(night?0.25:0.22):(night?0.12:0.1);
+    // Shadow darkens/blurs on ground contact
+    const sg=ctx.createRadialGradient(
+      this.x+this.W/2+shadowOffX,GY+3,0,
+      this.x+this.W/2+shadowOffX,GY+3,shadowW
+    );
+    sg.addColorStop(0,night?`rgba(5,15,50,${shadowAlpha})`:`rgba(0,0,0,${shadowAlpha})`);
+    sg.addColorStop(0.55,night?`rgba(5,15,50,${shadowAlpha*0.55})`:`rgba(0,0,0,${shadowAlpha*0.55})`);
     sg.addColorStop(1,'transparent');
-    ctx.fillStyle=sg;ctx.beginPath();ctx.ellipse(this.x+this.W/2,GY+5,sw,6.5*(this.onGround?1:0.35),0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=sg;
+    ctx.beginPath();ctx.ellipse(this.x+this.W/2+shadowOffX,GY+3,shadowW,shadowH,0,0,Math.PI*2);ctx.fill();
 
     // Rim light effect (on jump)
     if(this.rimFlash>0){
-      ctx.save();ctx.globalAlpha=this.rimFlash*0.45;
-      ctx.shadowColor=night?'#60d8ff':'#a0ff80';
-      ctx.shadowBlur=20;
+      ctx.save();ctx.globalAlpha=this.rimFlash*0.38;
       const rg=ctx.createRadialGradient(this.x+this.W/2,this.y+this.H/2,0,this.x+this.W/2,this.y+this.H/2,this.W);
       rg.addColorStop(0,'transparent');
-      rg.addColorStop(0.7,'transparent');
-      rg.addColorStop(1,night?'rgba(60,180,255,0.4)':'rgba(140,255,100,0.4)');
+      rg.addColorStop(0.72,'transparent');
+      rg.addColorStop(1,night?'rgba(60,180,255,0.5)':'rgba(160,255,120,0.5)');
       ctx.fillStyle=rg;ctx.fillRect(this.x-8,this.y-8,this.W+16,this.H+16);
       ctx.restore();
     }
@@ -1525,25 +1889,59 @@ class Cactus {
     const light=n?'#52a2d4':'#52aa40';
     const dark=n?'#103252':'#1a3e18';
     const tw=15,sp=(this.width-tw*this.trunks)/(this.trunks+1);
+
+    // ── Ground contact shadow (cast from sun toward left) ──
+    // Shadow footprint on the ground plane
+    const shadowW=this.width*0.9+8;
+    const sg=ctx.createRadialGradient(this.x+this.width*0.5,GY+2,0,this.x+this.width*0.5,GY+2,shadowW*0.7);
+    sg.addColorStop(0,n?'rgba(5,15,50,0.32)':'rgba(0,0,0,0.28)');
+    sg.addColorStop(0.6,n?'rgba(5,15,50,0.14)':'rgba(0,0,0,0.12)');
+    sg.addColorStop(1,'transparent');
+    ctx.fillStyle=sg;
+    ctx.beginPath();ctx.ellipse(this.x+this.width*0.5,GY+3,shadowW,5,0,0,Math.PI*2);ctx.fill();
+
+    // ── Long cast shadow (sun from upper-right) ──
+    if(!n){
+      ctx.save();
+      ctx.globalAlpha=0.10;
+      ctx.fillStyle='rgba(0,0,0,1)';
+      // Shadow stretches left along ground from each trunk
+      for(let i=0;i<this.trunks;i++){
+        const tx2=this.x+sp*(i+1)+tw*i+tw*0.3;
+        ctx.beginPath();
+        ctx.moveTo(tx2-2,GY);
+        ctx.lineTo(tx2+tw*0.6+2,GY);
+        ctx.lineTo(tx2+tw*0.6+2-this.height*0.55,GY+8);
+        ctx.lineTo(tx2-2-this.height*0.55,GY+8);
+        ctx.closePath();ctx.fill();
+      }
+      ctx.restore();
+    }
+
     for(let i=0;i<this.trunks;i++){
-      const tx=this.x+sp*(i+1)+tw*i;
-      ctx.fillStyle=dark;this._rr(tx+tw*0.5,this.y+10,tw*0.5,this.height-10,3);ctx.fill();
-      const tg=ctx.createLinearGradient(tx,this.y,tx+tw*0.58,this.y+this.height);
+      const tx2=this.x+sp*(i+1)+tw*i;
+
+      // ── Embed base: soft soil depression at base ──
+      ctx.fillStyle=n?'rgba(10,22,40,0.45)':'rgba(40,25,8,0.38)';
+      ctx.beginPath();ctx.ellipse(tx2+tw*0.3,GY,tw*0.55,3.5,0,0,Math.PI*2);ctx.fill();
+
+      ctx.fillStyle=dark;this._rr(tx2+tw*0.5,this.y+10,tw*0.5,this.height-10,3);ctx.fill();
+      const tg=ctx.createLinearGradient(tx2,this.y,tx2+tw*0.58,this.y+this.height);
       tg.addColorStop(0,light);tg.addColorStop(0.3,main);tg.addColorStop(1,dark);
-      ctx.fillStyle=tg;this._rr(tx,this.y+10,tw*0.62,this.height-10,4);ctx.fill();
-      ctx.fillStyle=light;ctx.globalAlpha=0.55;ctx.fillRect(tx+2,this.y+15,2.5,this.height-26);ctx.globalAlpha=1;
+      ctx.fillStyle=tg;this._rr(tx2,this.y+10,tw*0.62,this.height-10,4);ctx.fill();
+      ctx.fillStyle=light;ctx.globalAlpha=0.55;ctx.fillRect(tx2+2,this.y+15,2.5,this.height-26);ctx.globalAlpha=1;
       ctx.strokeStyle=dark;ctx.lineWidth=0.7;ctx.globalAlpha=0.35;
-      for(let r=0;r<5;r++){ctx.beginPath();ctx.moveTo(tx+2,this.y+18+r*9);ctx.lineTo(tx+tw*0.55-2,this.y+18+r*9);ctx.stroke()}
+      for(let r=0;r<5;r++){ctx.beginPath();ctx.moveTo(tx2+2,this.y+18+r*9);ctx.lineTo(tx2+tw*0.55-2,this.y+18+r*9);ctx.stroke()}
       ctx.globalAlpha=1;
       // Needles
       ctx.strokeStyle=light;ctx.lineWidth=0.8;ctx.globalAlpha=0.6;
       for(let r=0;r<4;r++){
-        ctx.beginPath();ctx.moveTo(tx,this.y+20+r*10);ctx.lineTo(tx-5,this.y+18+r*10);ctx.stroke();
-        ctx.beginPath();ctx.moveTo(tx+tw*0.62,this.y+22+r*10);ctx.lineTo(tx+tw*0.62+5,this.y+20+r*10);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(tx2,this.y+20+r*10);ctx.lineTo(tx2-5,this.y+18+r*10);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(tx2+tw*0.62,this.y+22+r*10);ctx.lineTo(tx2+tw*0.62+5,this.y+20+r*10);ctx.stroke();
       }
       ctx.globalAlpha=1;
       if(i===0){
-        const ax=tx-13,ay=this.y+this.height*0.36;
+        const ax=tx2-13,ay=this.y+this.height*0.36;
         const ag=ctx.createLinearGradient(ax,this.y+8,ax+13,ay);
         ag.addColorStop(0,light);ag.addColorStop(1,dark);
         ctx.fillStyle=ag;ctx.fillRect(ax,ay-2,15,10);
@@ -1552,7 +1950,7 @@ class Cactus {
         ctx.fillStyle=main;ctx.beginPath();ctx.moveTo(ax+4,this.y+10);ctx.lineTo(ax-4,this.y+4);ctx.lineTo(ax+10,this.y+4);ctx.closePath();ctx.fill();
       }
       if(i===this.trunks-1){
-        const ax=tx+tw-2,ay=this.y+this.height*0.40;
+        const ax=tx2+tw-2,ay=this.y+this.height*0.40;
         const ag=ctx.createLinearGradient(ax,this.y+12,ax+14,ay);
         ag.addColorStop(0,light);ag.addColorStop(1,dark);
         ctx.fillStyle=ag;ctx.fillRect(ax,ay-2,15,10);
@@ -1560,9 +1958,9 @@ class Cactus {
         ctx.fillStyle=light;ctx.globalAlpha=0.5;ctx.fillRect(ax+8,this.y+14,2,ay-this.y-8);ctx.globalAlpha=1;
         ctx.fillStyle=main;ctx.beginPath();ctx.moveTo(ax+7,this.y+12);ctx.lineTo(ax+14,this.y+6);ctx.lineTo(ax+2,this.y+6);ctx.closePath();ctx.fill();
       }
-      const tsg=ctx.createLinearGradient(tx+tw*0.4,this.y,tx+tw*0.6,this.y+14);
+      const tsg=ctx.createLinearGradient(tx2+tw*0.4,this.y,tx2+tw*0.6,this.y+14);
       tsg.addColorStop(0,light);tsg.addColorStop(1,main);
-      ctx.fillStyle=tsg;ctx.beginPath();ctx.moveTo(tx+tw/2,this.y);ctx.lineTo(tx-2,this.y+14);ctx.lineTo(tx+tw+2,this.y+14);ctx.closePath();ctx.fill();
+      ctx.fillStyle=tsg;ctx.beginPath();ctx.moveTo(tx2+tw/2,this.y);ctx.lineTo(tx2-2,this.y+14);ctx.lineTo(tx2+tw+2,this.y+14);ctx.closePath();ctx.fill();
     }
   }
   _rr(x,y,w,h,r){
@@ -1598,6 +1996,16 @@ class Bird {
     const bD=n?'#2a5882':'#3a2010';
     const cx=this.x+this.width/2, cy=this.y+this.height/2+4+Math.sin(this.bodyBob)*2.5;
     const wa=Math.sin(this.wc*Math.PI*2)*32;
+
+    // Perspective shadow on ground below bird
+    const altitudeFactor=clamp(1-(cy-GY+DINO_H+40)/(DINO_H+120),0,1);
+    const bShadW=this.width*(0.35+altitudeFactor*0.15);
+    const bsg=ctx.createRadialGradient(cx,GY+3,0,cx,GY+3,bShadW);
+    bsg.addColorStop(0,n?`rgba(5,20,55,${0.18*altitudeFactor})`:`rgba(0,0,0,${0.16*altitudeFactor})`);
+    bsg.addColorStop(1,'transparent');
+    ctx.fillStyle=bsg;
+    ctx.beginPath();ctx.ellipse(cx,GY+3,bShadW,4,0,0,Math.PI*2);ctx.fill();
+
     ctx.save();ctx.translate(cx,cy);
     // Wing shadow
     ctx.save();ctx.globalAlpha=0.15;
