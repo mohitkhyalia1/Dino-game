@@ -556,7 +556,7 @@ class Audio2 {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  INPUT
+//  INPUT  — keyboard + mouse + touch
 // ═══════════════════════════════════════════════════════════════
 class Input {
   constructor(){
@@ -568,7 +568,20 @@ class Input {
       if(e.code==='ArrowDown'){e.preventDefault();this.onDuck?.()}
       if(e.code==='KeyR')this.onRestart?.();
     });
-    window.addEventListener('keyup',e=>{k[e.code]=false;if(e.code==='ArrowDown')this.onDuckEnd?.()});
+    window.addEventListener('keyup',e=>{
+      k[e.code]=false;
+      if(e.code==='ArrowDown')this.onDuckEnd?.();
+    });
+    // Mouse controls
+    window.addEventListener('mousedown',e=>{
+      if(e.button===0){e.preventDefault();this.onJump?.();this.onStart?.();}
+      if(e.button===2){e.preventDefault();this.onDuck?.();}
+    });
+    window.addEventListener('mouseup',e=>{
+      if(e.button===2){e.preventDefault();this.onDuckEnd?.();}
+    });
+    window.addEventListener('contextmenu',e=>e.preventDefault());
+    // Touch
     let sy=0;
     window.addEventListener('touchstart',e=>{sy=e.touches[0].clientY;this.onJump?.();this.onStart?.()},{passive:true});
     window.addEventListener('touchend',e=>{if(e.changedTouches[0].clientY-sy>40){this.onDuck?.();setTimeout(()=>this.onDuckEnd?.(),500)}},{passive:true});
@@ -1571,7 +1584,18 @@ class Dino {
     if(this.onGround){this.vy=JVEL;this.onGround=false;this.jumps=1;this.sqY=0.58;this.stX=1.45;audio.jump();this.rimFlash=1}
     else if(this.jumps===1){this.vy=JVEL*0.78;this.jumps=2;this.sqY=0.72;this.stX=1.32;audio.dblJump();this.rimFlash=1}
   }
-  duck(on,audio){if(on&&!this.isDuck)audio.duck();this.isDuck=on;if(on&&!this.onGround)this.vy+=400}
+  duck(on,audio){
+    if(on&&!this.isDuck){
+      audio.duck();
+      this.isDuck=true;
+      // Fast-fall: if in air, slam downward
+      if(!this.onGround){
+        this.vy=Math.max(this.vy,680); // strong downward impulse
+      }
+    } else if(!on){
+      this.isDuck=false;
+    }
+  }
 
   update(dt,speed){
     const wasOn=this.onGround;
@@ -1606,363 +1630,907 @@ class Dino {
   draw(){
     const ctx=this.ctx,night=this.isNight;
     const C={
-      body  :night?'#4ab0e2':'#3a7a48',bodyL:night?'#7cd4f8':'#5daa68',
-      bodyD :night?'#236090':'#235230',belly:night?'#92deff':'#8ec860',
-      scale :night?'#38a0cc':'#2e6838',claw :night?'#1a4878':'#1a3020',
-      eye   :night?'#0a2848':'#0a1810',iris :night?'#1a92ff':'#206030',
+      body  :night?'#3a8abf':'#2e6838',
+      bodyL :night?'#6ac8ef':'#4e9858',
+      bodyD :night?'#1a5080':'#1a3a20',
+      belly :night?'#82ceff':'#78b848',
+      scale :night?'#2a78b0':'#246228',
+      claw  :night?'#0e3060':'#121c10',
+      eye   :night?'#061828':'#06120a',
+      iris  :night?'#1080ff':'#186828',
+      rimL  :night?'rgba(60,190,255,0.55)':'rgba(140,240,100,0.55)',
     };
 
-    // --- Physically grounded shadow: cast from sun (upper right = day, upper left = night) ---
-    // Shadow is an ellipse on the ground plane that grows when jumping
-    const shadowW=this.W*(this.onGround?0.58:0.28);
-    const shadowH=this.onGround?5.5:2.5;
-    const shadowOffX=this.onGround?0:clamp((GY-this.y-this.H)*0.22,0,30); // shifts right as jumping
-    const shadowAlpha=this.onGround?(night?0.25:0.22):(night?0.12:0.1);
-    // Shadow darkens/blurs on ground contact
+    const bx=this.x, by=this.y;
+    const bw=this.W, bh=this.H;
+    const t=this.cycle;
+    const air=!this.onGround;
+
+    // --- Ground shadow ---
+    const shadowW=bw*(air?0.24:0.52);
+    const shadowH=air?2:4.5;
+    const shadowDx=air?clamp((GY-by-bh)*0.18,0,22):0;
+    const shadowAlpha=air?(night?0.1:0.09):(night?0.22:0.19);
     const sg=ctx.createRadialGradient(
-      this.x+this.W/2+shadowOffX,GY+3,0,
-      this.x+this.W/2+shadowOffX,GY+3,shadowW
+      bx+bw/2+shadowDx,GY+3,0,
+      bx+bw/2+shadowDx,GY+3,shadowW+8
     );
     sg.addColorStop(0,night?`rgba(5,15,50,${shadowAlpha})`:`rgba(0,0,0,${shadowAlpha})`);
-    sg.addColorStop(0.55,night?`rgba(5,15,50,${shadowAlpha*0.55})`:`rgba(0,0,0,${shadowAlpha*0.55})`);
+    sg.addColorStop(0.6,night?`rgba(5,15,50,${shadowAlpha*0.4})`:`rgba(0,0,0,${shadowAlpha*0.4})`);
     sg.addColorStop(1,'transparent');
     ctx.fillStyle=sg;
-    ctx.beginPath();ctx.ellipse(this.x+this.W/2+shadowOffX,GY+3,shadowW,shadowH,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(bx+bw/2+shadowDx,GY+3,shadowW+8,shadowH,0,0,Math.PI*2);ctx.fill();
 
-    // Rim light effect (on jump)
+    // --- Rim flash on jump ---
     if(this.rimFlash>0){
-      ctx.save();ctx.globalAlpha=this.rimFlash*0.38;
-      const rg=ctx.createRadialGradient(this.x+this.W/2,this.y+this.H/2,0,this.x+this.W/2,this.y+this.H/2,this.W);
-      rg.addColorStop(0,'transparent');
-      rg.addColorStop(0.72,'transparent');
-      rg.addColorStop(1,night?'rgba(60,180,255,0.5)':'rgba(160,255,120,0.5)');
-      ctx.fillStyle=rg;ctx.fillRect(this.x-8,this.y-8,this.W+16,this.H+16);
+      ctx.save();ctx.globalAlpha=this.rimFlash*0.35;
+      const rg=ctx.createRadialGradient(bx+bw/2,by+bh/2,0,bx+bw/2,by+bh/2,bw*0.9);
+      rg.addColorStop(0,'transparent');rg.addColorStop(0.7,'transparent');
+      rg.addColorStop(1,C.rimL);
+      ctx.fillStyle=rg;ctx.fillRect(bx-10,by-10,bw+20,bh+20);
       ctx.restore();
     }
 
-    // Motion trail
+    // --- Motion ghost trail ---
     for(const f of this.trail){
-      ctx.save();ctx.globalAlpha=f.a*0.6;
-      ctx.translate(f.x+DINO_W/2,f.y+DINO_H-28);
+      ctx.save();ctx.globalAlpha=f.a*0.45;
+      ctx.translate(f.x+DINO_W/2,f.y+DINO_H*0.65);
       ctx.scale(f.sx||1,f.s||1);
-      ctx.translate(-(f.x+DINO_W/2),-(f.y+DINO_H-28));
-      ctx.fillStyle=night?'rgba(60,160,220,0.5)':'rgba(60,120,60,0.4)';
-      this._roundRect(f.x+10,f.y+16,38,38,10);ctx.fill();
+      ctx.translate(-(f.x+DINO_W/2),-(f.y+DINO_H*0.65));
+      ctx.fillStyle=night?'rgba(40,140,220,0.45)':'rgba(50,110,50,0.38)';
+      ctx.beginPath();
+      ctx.ellipse(f.x+bw*0.45,f.y+bh*0.42,bw*0.32,bh*0.38,0,0,Math.PI*2);
+      ctx.fill();
       ctx.restore();
     }
 
     ctx.save();
     if(this.isDuck) this._drawDuck(C);
-    else this._drawRun(C);
+    else            this._drawRun(C);
     ctx.restore();
   }
 
-  _roundRect(x,y,w,h,r){
-    const ctx=this.ctx;r=Math.min(r,w/2,h/2);
-    ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
-    ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
-    ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);
-    ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+  // ── HELPERS ────────────────────────────────────────────────────
+  _path(pts){
+    const ctx=this.ctx;
+    ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);
+    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+    ctx.closePath();
+  }
+  _bezPath(pts){
+    const ctx=this.ctx;
+    ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);
+    for(let i=1;i<pts.length;i+=3)
+      ctx.bezierCurveTo(pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1],pts[i+2][0],pts[i+2][1]);
+    ctx.closePath();
   }
 
+  // ── RUNNING POSE ──────────────────────────────────────────────
   _drawRun(C){
-    const ctx=this.ctx,x=this.x,t=this.cycle;
-    const hipX=x+30,hipY=this.y+DINO_H-28+this.bob;
-    ctx.translate(hipX,hipY);ctx.scale(this.stX,this.sqY);ctx.translate(-hipX,-hipY);
-    this._drawTail(x,hipY-6,Math.sin(t*Math.PI*2)*12,C);
-    this._drawBody(x,this.y,C);
-    this._drawArm(x+40,hipY-22,Math.sin(((t+0.5)%1)*Math.PI*2)*22,C);
-    this._drawHead(x,this.y,Math.sin(t*Math.PI*4)*2.2,C);
-    ctx.restore();ctx.save();
-    this._drawLeg(x,hipY,(t+0.5)%1,C,true);
-    this._drawLeg(x,hipY,t,C,false);
-    ctx.restore();ctx.save();
-  }
-
-  _drawTail(x,y,swing,C){
     const ctx=this.ctx;
-    ctx.save();ctx.translate(x+2,y);ctx.rotate(swing*Math.PI/180);
-    const tg=ctx.createLinearGradient(0,0,-30,12);
-    tg.addColorStop(0,C.body);tg.addColorStop(1,C.bodyD);
-    ctx.fillStyle=tg;
-    ctx.beginPath();ctx.moveTo(0,0);ctx.bezierCurveTo(-5,8,-17,18,-29,11);ctx.bezierCurveTo(-21,4,-6,-3,0,0);ctx.closePath();ctx.fill();
-    ctx.fillStyle=C.bodyL;ctx.globalAlpha=0.32;
-    ctx.beginPath();ctx.moveTo(0,0);ctx.bezierCurveTo(-4,5,-13,11,-21,9);ctx.bezierCurveTo(-15,4,-5,-1,0,0);ctx.closePath();ctx.fill();
-    ctx.globalAlpha=1;
-    // Tail spines
-    ctx.fillStyle=C.bodyD;
-    for(let i=0;i<3;i++){
-      const tx2=-5-i*7, ty2=-i*2;
-      ctx.beginPath();ctx.moveTo(tx2,ty2);ctx.lineTo(tx2-3,ty2-6+i);ctx.lineTo(tx2+3,ty2);ctx.closePath();ctx.fill();
-    }
-    ctx.restore();
-  }
+    const x=this.x, t=this.cycle;
+    const air=!this.onGround;
 
-  _drawBody(x,y,C){
-    const ctx=this.ctx;
-    const breathScale=1+Math.sin(this.breathT*0.8)*0.012;
-    ctx.save();ctx.translate(x+28,y+36);ctx.scale(1,breathScale);ctx.translate(-(x+28),-(y+36));
-    const bg=ctx.createLinearGradient(x+8,y+14,x+50,y+56);
-    bg.addColorStop(0,C.bodyL);bg.addColorStop(0.45,C.body);bg.addColorStop(1,C.bodyD);
-    ctx.fillStyle=bg;this._roundRect(x+8,y+16,40,38,11);ctx.fill();
-    const bellyG=ctx.createRadialGradient(x+26,y+35,2,x+26,y+35,17);
-    bellyG.addColorStop(0,C.belly);bellyG.addColorStop(1,'transparent');
-    ctx.fillStyle=bellyG;this._roundRect(x+14,y+24,24,22,8);ctx.fill();
-    // Dorsal spines
-    for(let i=0;i<5;i++){
-      const sx=x+14+i*6.5,sy=y+16;
-      const sg=ctx.createRadialGradient(sx,sy-3,0,sx,sy,5.5);
-      sg.addColorStop(0,C.bodyL);sg.addColorStop(1,C.bodyD);
-      ctx.fillStyle=sg;ctx.beginPath();ctx.ellipse(sx,sy,2.8,5.8,-0.2,0,Math.PI*2);ctx.fill();
-    }
-    // Scales
-    ctx.fillStyle=C.scale;
-    for(let row=0;row<3;row++) for(let col2=0;col2<3;col2++){
-      ctx.beginPath();ctx.ellipse(x+14+col2*9+(row%2)*4,y+27+row*8,3.6,2.6,0.15,0,Math.PI*2);ctx.fill();
-    }
-    ctx.fillStyle=C.bodyL;ctx.globalAlpha=0.22;
-    for(let row=0;row<3;row++) for(let col2=0;col2<3;col2++){
-      ctx.beginPath();ctx.ellipse(x+13+col2*9+(row%2)*4,y+26+row*8,1.5,1,0.15,0,Math.PI*2);ctx.fill();
-    }
-    ctx.globalAlpha=1;
-    // Rim highlight
-    ctx.strokeStyle=C.bodyL;ctx.lineWidth=1.2;ctx.globalAlpha=0.25;
-    this._roundRect(x+8,y+16,40,38,11);ctx.stroke();
-    ctx.globalAlpha=1;
-    ctx.restore();
-  }
+    // Body center reference
+    const hipX=x+32, hipY=this.y+DINO_H-26+this.bob;
+    const torsoY=this.y+DINO_H*0.38;
 
-  _drawHead(x,y,nodDeg,C){
-    const ctx=this.ctx;
+    // Squash/stretch pivot
     ctx.save();
-    const npx=x+38,npy=y+22;
-    ctx.translate(npx,npy);ctx.rotate(nodDeg*Math.PI/180);ctx.translate(-npx,-npy);
-    // Neck
-    ctx.fillStyle=C.body;
-    ctx.beginPath();ctx.moveTo(x+28,y+32);ctx.lineTo(x+40,y+32);ctx.lineTo(x+47,y+13);ctx.lineTo(x+34,y+13);ctx.closePath();ctx.fill();
-    const ng=ctx.createLinearGradient(x+28,y+32,x+47,y+13);
-    ng.addColorStop(0,C.bodyD);ng.addColorStop(0.5,'transparent');
-    ctx.fillStyle=ng;
-    ctx.beginPath();ctx.moveTo(x+28,y+32);ctx.lineTo(x+36,y+32);ctx.lineTo(x+40,y+13);ctx.lineTo(x+34,y+13);ctx.closePath();ctx.fill();
-    // Head
-    const hg=ctx.createLinearGradient(x+28,y,x+62,y+22);
-    hg.addColorStop(0,C.bodyL);hg.addColorStop(0.55,C.body);hg.addColorStop(1,C.bodyD);
-    ctx.fillStyle=hg;this._roundRect(x+28,y+1,33,22,8);ctx.fill();
-    // Snout
-    const snG=ctx.createLinearGradient(x+47,y+4,x+65,y+19);
-    snG.addColorStop(0,C.body);snG.addColorStop(1,C.bodyD);
-    ctx.fillStyle=snG;this._roundRect(x+47,y+5,18,14,5);ctx.fill();
-    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.45;this._roundRect(x+28,y+1,31,8,7);ctx.fill();ctx.globalAlpha=1;
-    ctx.fillStyle=C.belly;ctx.globalAlpha=0.48;this._roundRect(x+47,y+13,18,6,3);ctx.fill();ctx.globalAlpha=1;
-    // Nostril
-    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.ellipse(x+59,y+9,2.3,1.6,0.3,0,Math.PI*2);ctx.fill();
-    // Eye glow
-    const eyeGlow=ctx.createRadialGradient(x+39,y+10,0,x+39,y+10,11);
-    eyeGlow.addColorStop(0,C.eye);eyeGlow.addColorStop(1,'transparent');
-    ctx.fillStyle=eyeGlow;ctx.beginPath();ctx.arc(x+39,y+10,11,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=C.eye;ctx.beginPath();ctx.arc(x+39,y+10,7.5,0,Math.PI*2);ctx.fill();
-    if(this.eyeOpen){
-      const ig=ctx.createRadialGradient(x+38,y+9,0,x+39,y+10,6);
-      ig.addColorStop(0,'#88ff80');ig.addColorStop(0.4,C.iris);ig.addColorStop(1,'#002010');
-      ctx.fillStyle=ig;ctx.beginPath();ctx.arc(x+39,y+10,5.5,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='#000a08';ctx.beginPath();ctx.arc(x+39.5+this.eyeX,y+10,2.8,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='rgba(255,255,255,0.95)';ctx.beginPath();ctx.arc(x+41+this.eyeX,y+8,1.7,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='rgba(255,255,255,0.5)';ctx.beginPath();ctx.arc(x+38+this.eyeX,y+11.5,0.85,0,Math.PI*2);ctx.fill();
-    } else {
-      ctx.strokeStyle=C.bodyD;ctx.lineWidth=1.8;
-      ctx.beginPath();ctx.moveTo(x+34,y+10);ctx.quadraticCurveTo(x+39,y+14,x+44,y+10);ctx.stroke();
+    ctx.translate(hipX,hipY);ctx.scale(this.stX,this.sqY);ctx.translate(-hipX,-hipY);
+
+    // ── TAIL (drawn behind body) ──────────────────────────────
+    this._drawTailArticulated(x,hipY,t,C,air);
+
+    // ── BACK LEG (behind body, lower alpha) ──────────────────
+    ctx.restore();
+    this._drawLegArticulated(x,hipY,(t+0.5)%1,C,true);
+    ctx.save();
+    ctx.translate(hipX,hipY);ctx.scale(this.stX,this.sqY);ctx.translate(-hipX,-hipY);
+
+    // ── TORSO / RIBCAGE / ABDOMEN ─────────────────────────────
+    this._drawTorso(x,this.y,C);
+
+    // ── SMALL FOREARM ─────────────────────────────────────────
+    this._drawForearm(x+41,hipY-24,Math.sin(((t+0.5)%1)*Math.PI*2)*24,C);
+
+    // ── HEAD + NECK ───────────────────────────────────────────
+    const nodDeg=air
+      ? (this.vy<0?-14:8)                            // airborne tilt
+      : Math.sin(t*Math.PI*4)*3.5+this.bob*0.4;      // running nod
+    this._drawNeckHead(x,this.y,nodDeg,C);
+
+    ctx.restore();
+
+    // ── FRONT LEG (on top) ────────────────────────────────────
+    this._drawLegArticulated(x,hipY,t,C,false);
+  }
+
+  // ── ARTICULATED TAIL ──────────────────────────────────────────
+  _drawTailArticulated(x,hipY,t,C,air){
+    const ctx=this.ctx;
+    // Tail attaches at posterior of body
+    const tx0=x+6, ty0=hipY-4;
+    // Inertia: tail lags behind body motion
+    const baseSwing=air?Math.sin(t*Math.PI*2)*6:Math.sin(t*Math.PI*2)*18;
+    const mid1Swing=baseSwing*1.4;
+    const tipSwing=baseSwing*1.9;
+    const baseAngle=(baseSwing)*Math.PI/180-0.18;
+    const tailLen1=22, tailLen2=18, tailLen3=14;
+
+    // Compute chain joints
+    const j0={x:tx0,y:ty0};
+    const j1={x:j0.x+Math.cos(Math.PI+baseAngle)*tailLen1, y:j0.y+Math.sin(Math.PI+baseAngle)*(tailLen1*0.5)-2+mid1Swing*0.28};
+    const j2={x:j1.x+Math.cos(Math.PI+baseAngle*1.3)*tailLen2, y:j1.y+Math.sin(Math.PI+baseAngle*1.1)*(tailLen2*0.45)-1+tipSwing*0.35};
+    const j3={x:j2.x+Math.cos(Math.PI+baseAngle*1.6)*tailLen3, y:j2.y+Math.sin(Math.PI+baseAngle*1.4)*(tailLen3*0.38)+tipSwing*0.4};
+
+    // Draw tail as tapered ribbon
+    const segs=[[j0,j1,8,5],[j1,j2,5,3.5],[j2,j3,3.5,1.8]];
+    for(let s=0;s<segs.length;s++){
+      const [a,b,w0,w1]=segs[s];
+      const dx=b.x-a.x, dy=b.y-a.y;
+      const len=Math.sqrt(dx*dx+dy*dy)||1;
+      const nx=dy/len, ny=-dx/len;
+      ctx.beginPath();
+      ctx.moveTo(a.x+nx*w0, a.y+ny*w0);
+      ctx.lineTo(b.x+nx*w1, b.y+ny*w1);
+      ctx.lineTo(b.x-nx*w1, b.y-ny*w1);
+      ctx.lineTo(a.x-nx*w0, a.y-ny*w0);
+      ctx.closePath();
+      const tg=ctx.createLinearGradient(a.x,a.y,b.x,b.y);
+      const frac=s/segs.length;
+      tg.addColorStop(0,s===0?C.body:s===1?C.body:C.bodyD);
+      tg.addColorStop(1,s===0?C.bodyD:C.bodyD);
+      ctx.fillStyle=tg; ctx.fill();
+      // Highlight stripe
+      ctx.strokeStyle=C.bodyL; ctx.lineWidth=0.8; ctx.globalAlpha=0.22;
+      ctx.beginPath();ctx.moveTo(a.x+nx*(w0*0.35),a.y+ny*(w0*0.35));ctx.lineTo(b.x+nx*(w1*0.3),b.y+ny*(w1*0.3));ctx.stroke();
+      ctx.globalAlpha=1;
     }
-    // Mouth + tooth
-    ctx.strokeStyle=C.bodyD;ctx.lineWidth=1.5;
-    ctx.beginPath();ctx.moveTo(x+47,y+15);ctx.quadraticCurveTo(x+54,y+17,x+63,y+15);ctx.stroke();
-    ctx.fillStyle='rgba(255,255,240,0.85)';
-    ctx.beginPath();ctx.moveTo(x+51,y+15);ctx.lineTo(x+49,y+19);ctx.lineTo(x+54,y+15);ctx.closePath();ctx.fill();
-    // Rim highlight on head
-    ctx.strokeStyle=C.bodyL;ctx.lineWidth=1;ctx.globalAlpha=0.2;
-    this._roundRect(x+28,y+1,33,22,8);ctx.stroke();
+    // Tail tip decoration
+    ctx.fillStyle=C.bodyD;
+    ctx.beginPath();ctx.ellipse(j3.x,j3.y,2.2,1.4,Math.atan2(j3.y-j2.y,j3.x-j2.x),0,Math.PI*2);ctx.fill();
+    // Dorsal ridge spines on tail
+    ctx.fillStyle=C.bodyD;
+    const spineSegs=[[j0,j1],[j1,j2]];
+    spineSegs.forEach(([a,b],si)=>{
+      for(let i=0;i<2;i++){
+        const frac=(i+0.4)/(2);
+        const sx=lerp(a.x,b.x,frac), sy=lerp(a.y,b.y,frac);
+        const dx=b.x-a.x, dy=b.y-a.y;
+        const len=Math.sqrt(dx*dx+dy*dy)||1;
+        const perpX=-dy/len, perpY=dx/len;
+        const h=5.5-si*1.5-i*0.8;
+        ctx.beginPath();ctx.moveTo(sx,sy);
+        ctx.lineTo(sx+perpX*h-1.5,sy+perpY*h);
+        ctx.lineTo(sx+perpX*h+1.5,sy+perpY*h);
+        ctx.closePath();ctx.fill();
+      }
+    });
+  }
+
+  // ── TORSO (ribcage + abdomen) ──────────────────────────────────
+  _drawTorso(x,y,C){
+    const ctx=this.ctx;
+    const breathScale=1+Math.sin(this.breathT*0.75)*0.013;
+    ctx.save();
+    ctx.translate(x+28,y+36);ctx.scale(1,breathScale);ctx.translate(-(x+28),-(y+36));
+
+    // Abdomen (lower, wider)
+    const abdG=ctx.createLinearGradient(x+6,y+36,x+52,y+58);
+    abdG.addColorStop(0,C.bodyL);abdG.addColorStop(0.5,C.body);abdG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=abdG;
+    ctx.beginPath();
+    ctx.moveTo(x+8,y+54);
+    ctx.bezierCurveTo(x+8,y+62,x+16,y+66,x+28,y+66);
+    ctx.bezierCurveTo(x+40,y+66,x+48,y+62,x+48,y+54);
+    ctx.bezierCurveTo(x+48,y+44,x+42,y+38,x+38,y+36);
+    ctx.bezierCurveTo(x+30,y+34,x+18,y+34,x+12,y+36);
+    ctx.bezierCurveTo(x+8,y+38,x+8,y+44,x+8,y+54);
+    ctx.closePath();ctx.fill();
+
+    // Ribcage (upper, narrower, more muscular)
+    const ribG=ctx.createLinearGradient(x+12,y+14,x+50,y+42);
+    ribG.addColorStop(0,C.bodyL);ribG.addColorStop(0.45,C.body);ribG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=ribG;
+    ctx.beginPath();
+    ctx.moveTo(x+12,y+38);
+    ctx.bezierCurveTo(x+8,y+36,x+10,y+22,x+16,y+16);
+    ctx.bezierCurveTo(x+20,y+12,x+30,y+10,x+38,y+14);
+    ctx.bezierCurveTo(x+46,y+18,x+48,y+30,x+46,y+38);
+    ctx.bezierCurveTo(x+40,y+36,x+20,y+36,x+12,y+38);
+    ctx.closePath();ctx.fill();
+
+    // Belly highlight
+    const bellyG=ctx.createLinearGradient(x+14,y+40,x+14,y+62);
+    bellyG.addColorStop(0,C.belly);bellyG.addColorStop(1,'transparent');
+    ctx.fillStyle=bellyG;ctx.globalAlpha=0.55;
+    ctx.beginPath();
+    ctx.ellipse(x+26,y+52,14,10,0,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=1;
+
+    // Muscle groove lines on ribcage
+    ctx.strokeStyle=C.bodyD;ctx.lineWidth=0.8;ctx.globalAlpha=0.22;
+    [[x+18,y+22,x+16,y+32],[x+24,y+18,x+22,y+30],[x+30,y+16,x+30,y+28]].forEach(([ax,ay,bx2,by2])=>{
+      ctx.beginPath();ctx.moveTo(ax,ay);ctx.quadraticCurveTo((ax+bx2)/2-3,(ay+by2)/2,bx2,by2);ctx.stroke();
+    });
+    ctx.globalAlpha=1;
+
+    // Scale texture
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.7;
+    for(let row=0;row<3;row++) for(let col=0;col<4;col++){
+      ctx.beginPath();ctx.ellipse(x+14+col*8+(row%2)*4,y+28+row*7,3,2.2,0.18,0,Math.PI*2);ctx.fill();
+    }
+    // Scale highlight
+    ctx.fillStyle=C.bodyL;ctx.globalAlpha=0.18;
+    for(let row=0;row<3;row++) for(let col=0;col<4;col++){
+      ctx.beginPath();ctx.ellipse(x+13+col*8+(row%2)*4,y+27+row*7,1.3,0.9,0.18,0,Math.PI*2);ctx.fill();
+    }
+    ctx.globalAlpha=1;
+
+    // Dorsal spine row
+    for(let i=0;i<6;i++){
+      const sx=x+16+i*5.5, sy=y+14;
+      const spH=6.5-i*0.4;
+      const spg=ctx.createLinearGradient(sx,sy,sx,sy-spH);
+      spg.addColorStop(0,C.body);spg.addColorStop(1,C.bodyL);
+      ctx.fillStyle=spg;
+      ctx.beginPath();
+      ctx.moveTo(sx-2.5,sy);
+      ctx.lineTo(sx+0.5,sy-spH);
+      ctx.lineTo(sx+3,sy);
+      ctx.closePath();ctx.fill();
+      ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.3;
+      ctx.beginPath();ctx.moveTo(sx+0.5,sy-spH);ctx.lineTo(sx+3,sy);ctx.lineTo(sx+0.5,sy-spH+2);ctx.closePath();ctx.fill();
+      ctx.globalAlpha=1;
+    }
+
+    // Rim light
+    ctx.strokeStyle=C.bodyL;ctx.lineWidth=1.2;ctx.globalAlpha=0.18;
+    ctx.beginPath();
+    ctx.moveTo(x+12,y+38);
+    ctx.bezierCurveTo(x+8,y+36,x+10,y+22,x+16,y+16);
+    ctx.bezierCurveTo(x+20,y+12,x+30,y+10,x+38,y+14);
+    ctx.stroke();
+    ctx.globalAlpha=1;
+
     ctx.restore();
   }
 
-  _drawArm(ax,ay,swing,C){
+  // ── NECK + HEAD ────────────────────────────────────────────────
+  _drawNeckHead(x,y,nodDeg,C){
     const ctx=this.ctx;
-    ctx.save();ctx.translate(ax,ay);ctx.rotate(swing*Math.PI/180);
-    const ag=ctx.createLinearGradient(0,0,0,14);
+    const npx=x+36, npy=y+24;
+    ctx.save();
+    ctx.translate(npx,npy);ctx.rotate(nodDeg*Math.PI/180);ctx.translate(-npx,-npy);
+
+    // ── Neck ──
+    // Neck connects torso to skull with organic taper
+    const neckG=ctx.createLinearGradient(x+26,y+34,x+46,y+8);
+    neckG.addColorStop(0,C.body);neckG.addColorStop(0.5,C.bodyL);neckG.addColorStop(1,C.body);
+    ctx.fillStyle=neckG;
+    ctx.beginPath();
+    ctx.moveTo(x+24,y+34);
+    ctx.bezierCurveTo(x+24,y+28,x+30,y+14,x+34,y+8);
+    ctx.bezierCurveTo(x+36,y+6,x+42,y+8,x+46,y+12);
+    ctx.bezierCurveTo(x+48,y+18,x+42,y+30,x+38,y+34);
+    ctx.closePath();ctx.fill();
+    // Neck shadow side
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.28;
+    ctx.beginPath();
+    ctx.moveTo(x+24,y+34);ctx.bezierCurveTo(x+24,y+28,x+28,y+16,x+32,y+10);
+    ctx.bezierCurveTo(x+33,y+8,x+35,y+8,x+34,y+8);
+    ctx.bezierCurveTo(x+30,y+14,x+24,y+28,x+24,y+34);
+    ctx.closePath();ctx.fill();
+    ctx.globalAlpha=1;
+    // Neck muscle ridge
+    ctx.strokeStyle=C.bodyL;ctx.lineWidth=1.2;ctx.globalAlpha=0.22;
+    ctx.beginPath();ctx.moveTo(x+36,y+32);ctx.bezierCurveTo(x+38,y+24,x+43,y+16,x+44,y+12);ctx.stroke();
+    ctx.globalAlpha=1;
+
+    // ── Skull shape ──
+    // Main cranium
+    const craniumG=ctx.createLinearGradient(x+28,y-4,x+66,y+20);
+    craniumG.addColorStop(0,C.bodyL);craniumG.addColorStop(0.55,C.body);craniumG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=craniumG;
+    ctx.beginPath();
+    // top arc of skull
+    ctx.moveTo(x+32,y+4);
+    ctx.bezierCurveTo(x+30,y-2,x+36,y-6,x+44,y-5);
+    ctx.bezierCurveTo(x+52,y-4,x+58,y,x+60,y+6);
+    // jaw transition
+    ctx.bezierCurveTo(x+62,y+10,x+62,y+16,x+60,y+18);
+    ctx.bezierCurveTo(x+56,y+22,x+44,y+22,x+34,y+20);
+    // back of skull
+    ctx.bezierCurveTo(x+28,y+18,x+28,y+12,x+32,y+4);
+    ctx.closePath();ctx.fill();
+
+    // ── Snout / muzzle ──
+    const snoutG=ctx.createLinearGradient(x+46,y+2,x+72,y+18);
+    snoutG.addColorStop(0,C.body);snoutG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=snoutG;
+    ctx.beginPath();
+    ctx.moveTo(x+52,y+1);
+    ctx.bezierCurveTo(x+58,y-1,x+70,y+2,x+72,y+8);
+    ctx.bezierCurveTo(x+73,y+13,x+68,y+18,x+62,y+19);
+    ctx.bezierCurveTo(x+56,y+20,x+50,y+18,x+48,y+16);
+    ctx.bezierCurveTo(x+46,y+13,x+47,y+5,x+52,y+1);
+    ctx.closePath();ctx.fill();
+    // Snout underside lighter
+    ctx.fillStyle=C.belly;ctx.globalAlpha=0.42;
+    ctx.beginPath();
+    ctx.ellipse(x+62,y+16,9,3.5,0.1,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+    // Subtle brow ridge
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.35;
+    ctx.beginPath();
+    ctx.moveTo(x+32,y+2);ctx.bezierCurveTo(x+38,y-4,x+50,y-4,x+56,y+1);ctx.stroke && null;
+    ctx.ellipse(x+44,y,14,3.5,0.05,0,Math.PI,true);ctx.fill();
+    ctx.globalAlpha=1;
+
+    // ── Nostril ──
+    ctx.fillStyle=C.bodyD;
+    ctx.beginPath();ctx.ellipse(x+67,y+7,2.5,1.8,0.4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.5;
+    ctx.beginPath();ctx.ellipse(x+67,y+7,1.5,1,0.4,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+
+    // ── Jaw ──
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.3;
+    ctx.beginPath();
+    ctx.moveTo(x+48,y+18);ctx.bezierCurveTo(x+50,y+22,x+62,y+23,x+68,y+19);
+    ctx.bezierCurveTo(x+72,y+17,x+73,y+13,x+72,y+11);
+    ctx.bezierCurveTo(x+71,y+14,x+68,y+19,x+62,y+21);
+    ctx.bezierCurveTo(x+56,y+22,x+50,y+22,x+48,y+18);
+    ctx.closePath();ctx.fill();
+    ctx.globalAlpha=1;
+    // Mouth line
+    ctx.strokeStyle=C.bodyD;ctx.lineWidth=1.4;
+    ctx.beginPath();ctx.moveTo(x+50,y+18);ctx.bezierCurveTo(x+58,y+20,x+66,y+20,x+70,y+17);ctx.stroke();
+    // Teeth
+    ctx.fillStyle='rgba(248,246,226,0.88)';
+    [[x+54,y+18,2.2,3.5,0.1],[x+59,y+18.5,1.8,3,0.05],[x+64,y+18,1.6,2.8,-0.1]].forEach(([tx,ty,tw2,th,ang])=>{
+      ctx.beginPath();ctx.ellipse(tx,ty,tw2,th,ang,0,Math.PI);ctx.fill();
+    });
+
+    // ── Eye socket ──
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.6;
+    ctx.beginPath();ctx.ellipse(x+42,y+8,10,8.5,-0.1,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+    // Eye white/sclera
+    ctx.fillStyle=C.eye;
+    ctx.beginPath();ctx.arc(x+42,y+7,7.5,0,Math.PI*2);ctx.fill();
+    if(this.eyeOpen){
+      // Iris
+      const ig=ctx.createRadialGradient(x+41,y+6,0,x+42,y+7,6);
+      ig.addColorStop(0,'rgba(160,255,120,0.9)');
+      ig.addColorStop(0.25,C.iris);
+      ig.addColorStop(0.7,'rgba(0,30,10,0.95)');
+      ig.addColorStop(1,'rgba(0,20,5,1)');
+      ctx.fillStyle=ig;ctx.beginPath();ctx.arc(x+42,y+7,6,0,Math.PI*2);ctx.fill();
+      // Pupil
+      ctx.fillStyle='#000805';
+      ctx.beginPath();ctx.ellipse(x+42.5+this.eyeX,y+7,2.8,3.2,-0.1,0,Math.PI*2);ctx.fill();
+      // Specular highlights
+      ctx.fillStyle='rgba(255,255,255,0.96)';ctx.beginPath();ctx.arc(x+44+this.eyeX,y+5,1.8,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.48)';ctx.beginPath();ctx.arc(x+40+this.eyeX,y+9.5,0.9,0,Math.PI*2);ctx.fill();
+    } else {
+      // Blink
+      ctx.strokeStyle=C.bodyD;ctx.lineWidth=1.8;
+      ctx.beginPath();ctx.moveTo(x+36,y+7);ctx.quadraticCurveTo(x+42,y+12,x+48,y+7);ctx.stroke();
+    }
+    // Brow ridge highlight
+    ctx.strokeStyle=C.bodyL;ctx.lineWidth=1;ctx.globalAlpha=0.22;
+    ctx.beginPath();ctx.moveTo(x+34,y+2);ctx.bezierCurveTo(x+38,y-2,x+46,y-2,x+52,y+2);ctx.stroke();
+    ctx.globalAlpha=1;
+    // Skull rim light
+    ctx.strokeStyle=C.bodyL;ctx.lineWidth=1;ctx.globalAlpha=0.18;
+    ctx.beginPath();
+    ctx.moveTo(x+32,y+4);ctx.bezierCurveTo(x+30,y-2,x+36,y-6,x+44,y-5);
+    ctx.bezierCurveTo(x+52,y-4,x+58,y,x+60,y+6);ctx.stroke();
+    ctx.globalAlpha=1;
+
+    ctx.restore();
+  }
+
+  // ── FOREARM (vestigial arm) ────────────────────────────────────
+  _drawForearm(ax,ay,swingDeg,C){
+    const ctx=this.ctx;
+    ctx.save();ctx.translate(ax,ay);ctx.rotate(swingDeg*Math.PI/180);
+    const ag=ctx.createLinearGradient(0,0,0,16);
     ag.addColorStop(0,C.bodyL);ag.addColorStop(1,C.body);
-    ctx.fillStyle=ag;ctx.beginPath();ctx.ellipse(0,7,4.5,9,0,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.arc(0,13,3.5,0,Math.PI*2);ctx.fill();
-    ctx.translate(0,14);
-    ctx.fillStyle=C.bodyL;ctx.beginPath();ctx.ellipse(0,6,3.5,8,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=ag;
+    ctx.beginPath();
+    ctx.moveTo(-4,0);ctx.bezierCurveTo(-5,6,-4,12,-2,16);
+    ctx.bezierCurveTo(0,20,4,20,5,16);
+    ctx.bezierCurveTo(6,12,5,6,4,0);
+    ctx.closePath();ctx.fill();
+    // Elbow bump
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.4;
+    ctx.beginPath();ctx.ellipse(1,16,4,3,-0.2,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+    // Tiny claws
+    ctx.translate(1,16);ctx.rotate(0.3);
     ctx.fillStyle=C.claw;
-    [[0,13,-3,21,4,18],[-4,12,-6,20,0,17]].forEach(([ox,oy,tx,ty,t2x,t2y])=>{
+    [[-3,0,-5,6,-1,5],[1,0,1,6,4,4]].forEach(([ox,oy,tx,ty,t2x,t2y])=>{
       ctx.beginPath();ctx.moveTo(ox,oy);ctx.lineTo(tx,ty);ctx.lineTo(t2x,t2y);ctx.closePath();ctx.fill();
     });
     ctx.restore();
   }
 
-  _drawLeg(x,hipY,phase,C,isBack){
+  // ── ARTICULATED LEG ───────────────────────────────────────────
+  _drawLegArticulated(x,hipY,phase,C,isBack){
     const ctx=this.ctx;
-    const hipX=isBack?x+24:x+34;
+    const hipX=isBack?x+22:x+34;
     const p=phase*Math.PI*2;
-    const thighA=Math.sin(p)*32;
-    const shinBend=Math.max(0,Math.sin(p+Math.PI*0.62))*42;
-    const footA=-thighA*0.28+shinBend*0.18;
-    const tL=24,sL=21,fL=16;
+
+    // Three-segment IK-style leg
+    const thighAng = Math.sin(p)*30 * (isBack?0.85:1);
+    const shinBend  = Math.max(0, Math.sin(p+Math.PI*0.6))*48;
+    const ankleAng  = -thighAng*0.3 + shinBend*0.22;
+    const toeAng    = -shinBend*0.15 + (this.onGround?8:0);
+
+    const thighL=22, shinL=19, footL=14;
+
     ctx.save();
-    if(isBack)ctx.globalAlpha=0.65;
-    ctx.translate(hipX,hipY);ctx.rotate(thighA*Math.PI/180);
-    const tg=ctx.createLinearGradient(isBack?-5:-6,0,isBack?5:6,tL);
-    tg.addColorStop(0,isBack?C.bodyD:C.bodyL);tg.addColorStop(1,isBack?C.bodyD:C.body);
-    ctx.fillStyle=tg;ctx.beginPath();ctx.ellipse(0,tL/2,isBack?4.5:6,tL/2+1.5,0,0,Math.PI*2);ctx.fill();
-    const kg=ctx.createRadialGradient(0,tL,0,0,tL,5.5);
-    kg.addColorStop(0,C.bodyL);kg.addColorStop(1,C.bodyD);
-    ctx.fillStyle=kg;ctx.beginPath();ctx.arc(0,tL,isBack?3.5:4.5,0,Math.PI*2);ctx.fill();
-    ctx.translate(0,tL);ctx.rotate(shinBend*Math.PI/180);
-    const sg=ctx.createLinearGradient(-4,0,4,sL);
-    sg.addColorStop(0,isBack?C.bodyD:C.bodyL);sg.addColorStop(1,isBack?C.bodyD:C.body);
-    ctx.fillStyle=sg;ctx.beginPath();ctx.ellipse(0,sL/2,isBack?3.5:5,sL/2+1,0,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.arc(0,sL,isBack?2.5:3.5,0,Math.PI*2);ctx.fill();
-    ctx.translate(0,sL);ctx.rotate(footA*Math.PI/180);
-    const fg=ctx.createLinearGradient(0,0,fL,6);
-    fg.addColorStop(0,C.body);fg.addColorStop(1,C.bodyD);
-    ctx.fillStyle=fg;ctx.beginPath();ctx.ellipse(fL/2+1,3,fL/2+3,5,0,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=C.bodyL;ctx.globalAlpha=isBack?0.2:0.3;
-    ctx.beginPath();ctx.ellipse(fL*0.3,2,fL*0.3,2.5,0,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=isBack?0.65:1;
+    if(isBack) ctx.globalAlpha=0.6;
+    ctx.translate(hipX,hipY);
+
+    // ── Thigh ──
+    ctx.save();ctx.rotate(thighAng*Math.PI/180);
+    const thighG=ctx.createLinearGradient(isBack?-5:-7,0,isBack?5:7,thighL);
+    thighG.addColorStop(0,isBack?C.bodyD:C.bodyL);
+    thighG.addColorStop(0.5,C.body);
+    thighG.addColorStop(1,isBack?C.bodyD:C.bodyD);
+    ctx.fillStyle=thighG;
+    ctx.beginPath();
+    ctx.moveTo(-(isBack?4.5:6.5),0);
+    ctx.bezierCurveTo(-(isBack?5:7),thighL*0.3,-(isBack?4:5.5),thighL*0.7,-(isBack?3.5:4.5),thighL);
+    ctx.bezierCurveTo(-(isBack?1:2),thighL+1,(isBack?1:2.5),thighL+1,(isBack?3.5:5),thighL);
+    ctx.bezierCurveTo((isBack?4.5:6),thighL*0.7,(isBack?5.5:7),thighL*0.3,(isBack?5:7),0);
+    ctx.closePath();ctx.fill();
+    // Thigh muscle line
+    ctx.strokeStyle=C.bodyL;ctx.lineWidth=0.9;ctx.globalAlpha=isBack?0.1:0.22;
+    ctx.beginPath();ctx.moveTo(isBack?1:2,2);ctx.bezierCurveTo(isBack?1:3,thighL*0.4,isBack?2:4,thighL*0.7,isBack?2:3,thighL-2);ctx.stroke();
+    ctx.globalAlpha=isBack?0.6:1;
+
+    // ── Knee joint ──
+    const kneG=ctx.createRadialGradient(0,thighL,0,0,thighL,isBack?4:5.5);
+    kneG.addColorStop(0,C.bodyL);kneG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=kneG;ctx.beginPath();ctx.arc(0,thighL,isBack?4:5,0,Math.PI*2);ctx.fill();
+
+    ctx.translate(0,thighL);
+
+    // ── Shin ──
+    ctx.save();ctx.rotate(shinBend*Math.PI/180);
+    const shinG=ctx.createLinearGradient(isBack?-4:-5.5,0,isBack?4:5.5,shinL);
+    shinG.addColorStop(0,isBack?C.bodyD:C.body);
+    shinG.addColorStop(1,isBack?C.bodyD:C.bodyD);
+    ctx.fillStyle=shinG;
+    ctx.beginPath();
+    ctx.moveTo(-(isBack?3.8:5),0);
+    ctx.bezierCurveTo(-(isBack?4.2:5.5),shinL*0.4,-(isBack?3:4),shinL*0.75,-(isBack?2.8:3.5),shinL);
+    ctx.bezierCurveTo(-(isBack?0.5:1),shinL+1,(isBack?1.5:3),shinL+1,(isBack?3.5:4.5),shinL);
+    ctx.bezierCurveTo((isBack?4:5.2),shinL*0.75,(isBack?4.2:5.5),shinL*0.4,(isBack?3.8:5),0);
+    ctx.closePath();ctx.fill();
+
+    // ── Ankle joint ──
+    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.arc(0,shinL,isBack?3:4,0,Math.PI*2);ctx.fill();
+    ctx.translate(0,shinL);
+
+    // ── Foot ──
+    ctx.save();ctx.rotate(ankleAng*Math.PI/180);
+    const footG=ctx.createLinearGradient(0,0,footL+4,6);
+    footG.addColorStop(0,C.body);footG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=footG;
+    ctx.beginPath();
+    ctx.moveTo(-2,-1);
+    ctx.bezierCurveTo(2,-4,footL+2,-2,footL+5,1);
+    ctx.bezierCurveTo(footL+6,4,footL+4,7,footL+1,7);
+    ctx.bezierCurveTo(footL-2,8,2,6,-2,4);
+    ctx.bezierCurveTo(-4,3,-4,1,-2,-1);
+    ctx.closePath();ctx.fill();
+    // Ankle scale
+    ctx.fillStyle=C.bodyL;ctx.globalAlpha=isBack?0.15:0.28;
+    ctx.beginPath();ctx.ellipse(4,2,4,2.5,0,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=isBack?0.6:1;
+    // Claws
     ctx.fillStyle=C.claw;
-    [0,fL*0.44,fL*0.88].forEach(tx=>{
-      ctx.beginPath();ctx.moveTo(tx,4);ctx.lineTo(tx-3,12);ctx.lineTo(tx+4,9);ctx.closePath();ctx.fill();
-      ctx.fillStyle=C.body;ctx.globalAlpha=isBack?0.22:0.32;
-      ctx.beginPath();ctx.moveTo(tx,4);ctx.lineTo(tx-1,8);ctx.lineTo(tx+1,7);ctx.closePath();ctx.fill();
-      ctx.fillStyle=C.claw;ctx.globalAlpha=isBack?0.65:1;
+    [2,footL*0.45,footL*0.88].forEach((tx,ci)=>{
+      ctx.beginPath();ctx.moveTo(tx,5);ctx.lineTo(tx-2.5,12);ctx.lineTo(tx+3.5,9.5);ctx.closePath();ctx.fill();
+      // Claw highlight
+      ctx.fillStyle=C.body;ctx.globalAlpha=isBack?0.12:0.25;
+      ctx.beginPath();ctx.moveTo(tx,5);ctx.lineTo(tx-1,8);ctx.lineTo(tx+1,7.5);ctx.closePath();ctx.fill();
+      ctx.fillStyle=C.claw;ctx.globalAlpha=isBack?0.6:1;
     });
-    ctx.restore();
+    ctx.restore(); // foot
+    ctx.restore(); // shin
+    ctx.restore(); // thigh
+    ctx.restore(); // leg
   }
 
+  // ── DUCK POSE ─────────────────────────────────────────────────
   _drawDuck(C){
     const ctx=this.ctx,x=this.x,y=this.y,t=this.cycle;
-    const bg=ctx.createLinearGradient(x+4,y+2,x+DUCK_W,y+DUCK_H);
+
+    // Duck silhouette - proper crouching body
+    const bg=ctx.createLinearGradient(x+2,y+2,x+DUCK_W-2,y+DUCK_H-2);
     bg.addColorStop(0,C.bodyL);bg.addColorStop(0.5,C.body);bg.addColorStop(1,C.bodyD);
-    ctx.fillStyle=bg;this._roundRect(x+4,y+2,DUCK_W-8,DUCK_H-4,10);ctx.fill();
-    const bellyG=ctx.createRadialGradient(x+35,y+DUCK_H/2,2,x+35,y+DUCK_H/2,18);
+    ctx.fillStyle=bg;
+    ctx.beginPath();
+    // Low crouching body shape
+    ctx.moveTo(x+10,y+DUCK_H-2);
+    ctx.bezierCurveTo(x+4,y+DUCK_H,x+2,y+DUCK_H-6,x+2,y+DUCK_H-10);
+    ctx.bezierCurveTo(x+2,y+DUCK_H-18,x+6,y+DUCK_H-26,x+10,y+DUCK_H-28);
+    ctx.bezierCurveTo(x+14,y+2,x+28,y+0,x+40,y+2);
+    ctx.bezierCurveTo(x+54,y+4,x+DUCK_W-2,y+10,x+DUCK_W-2,y+DUCK_H-14);
+    ctx.bezierCurveTo(x+DUCK_W-2,y+DUCK_H-6,x+DUCK_W-6,y+DUCK_H,x+DUCK_W-10,y+DUCK_H-2);
+    ctx.closePath();ctx.fill();
+
+    // Belly
+    const bellyG=ctx.createRadialGradient(x+38,y+DUCK_H*0.55,1,x+38,y+DUCK_H*0.55,16);
     bellyG.addColorStop(0,C.belly);bellyG.addColorStop(1,'transparent');
-    ctx.fillStyle=bellyG;this._roundRect(x+14,y+6,DUCK_W-32,DUCK_H-12,6);ctx.fill();
-    ctx.fillStyle=C.scale;
-    for(let i=0;i<6;i++){ctx.beginPath();ctx.ellipse(x+14+i*10,y+10,3.2,2.2,0.15,0,Math.PI*2);ctx.fill()}
-    for(let i=0;i<3;i++){ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.ellipse(x+20+i*12,y+2,2.5,4.5,-0.2,0,Math.PI*2);ctx.fill()}
-    const hx=x+DUCK_W-32;
-    const hg2=ctx.createLinearGradient(hx,y-4,hx+30,y+16);
-    hg2.addColorStop(0,C.bodyL);hg2.addColorStop(1,C.bodyD);
-    ctx.fillStyle=hg2;this._roundRect(hx,y-4,28,20,6);ctx.fill();
-    this._roundRect(hx+18,y+1,18,12,4);ctx.fill();
-    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.4;this._roundRect(hx,y-4,26,8,6);ctx.fill();ctx.globalAlpha=1;
-    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.ellipse(hx+32,y+4,2.2,1.5,0.3,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=C.eye;ctx.beginPath();ctx.arc(hx+10,y+5,7.5,0,Math.PI*2);ctx.fill();
-    if(this.eyeOpen){
-      const ig=ctx.createRadialGradient(hx+9,y+4,0,hx+10,y+5,6);
-      ig.addColorStop(0,'#88ff80');ig.addColorStop(0.4,C.iris);ig.addColorStop(1,'#002010');
-      ctx.fillStyle=ig;ctx.beginPath();ctx.arc(hx+10,y+5,5.5,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='#000a08';ctx.beginPath();ctx.arc(hx+10.5,y+5,2.8,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='rgba(255,255,255,0.92)';ctx.beginPath();ctx.arc(hx+12,y+3,1.6,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=bellyG;ctx.globalAlpha=0.52;
+    ctx.beginPath();ctx.ellipse(x+38,y+DUCK_H*0.55,18,9,0,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+
+    // Scale row
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.75;
+    for(let i=0;i<5;i++){ctx.beginPath();ctx.ellipse(x+14+i*11,y+12,3,2,0.15,0,Math.PI*2);ctx.fill()}
+    ctx.globalAlpha=1;
+    // Dorsal spines (flat, tucked)
+    ctx.fillStyle=C.bodyD;
+    for(let i=0;i<4;i++){
+      ctx.beginPath();ctx.ellipse(x+20+i*10,y+3,2.2,4,-0.12,0,Math.PI*2);ctx.fill();
     }
+
+    // Duck tail (tucked)
+    const hx=x+4;
+    ctx.save();
+    ctx.translate(hx,y+DUCK_H*0.35);
+    const tdG=ctx.createLinearGradient(-6,0,0,12);
+    tdG.addColorStop(0,C.body);tdG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=tdG;
+    ctx.beginPath();ctx.moveTo(0,0);ctx.bezierCurveTo(-8,4,-16,10,-14,18);ctx.bezierCurveTo(-8,12,-2,6,0,0);ctx.closePath();ctx.fill();
+    ctx.restore();
+
+    // Head (low forward position)
+    const headX=x+DUCK_W-34;
+    const hg2=ctx.createLinearGradient(headX,y-4,headX+32,y+18);
+    hg2.addColorStop(0,C.bodyL);hg2.addColorStop(0.55,C.body);hg2.addColorStop(1,C.bodyD);
+    ctx.fillStyle=hg2;
+    ctx.beginPath();
+    ctx.moveTo(headX+4,y+2);
+    ctx.bezierCurveTo(headX+2,y-4,headX+10,y-6,headX+18,y-4);
+    ctx.bezierCurveTo(headX+26,y-2,headX+30,y+4,headX+30,y+10);
+    ctx.bezierCurveTo(headX+30,y+16,headX+24,y+19,headX+16,y+19);
+    ctx.bezierCurveTo(headX+8,y+18,headX+2,y+12,headX+4,y+2);
+    ctx.closePath();ctx.fill();
+    // Duck head snout
+    ctx.fillStyle=C.body;
+    ctx.beginPath();
+    ctx.moveTo(headX+22,y+2);ctx.bezierCurveTo(headX+28,y,headX+36,y+4,headX+36,y+9);
+    ctx.bezierCurveTo(headX+36,y+13,headX+30,y+15,headX+24,y+14);ctx.bezierCurveTo(headX+20,y+13,headX+20,y+8,headX+22,y+2);
+    ctx.closePath();ctx.fill();
+    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.ellipse(headX+33,y+6,1.8,1.2,0.3,0,Math.PI*2);ctx.fill();
+    // Duck mouth
+    ctx.strokeStyle=C.bodyD;ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(headX+24,y+13);ctx.quadraticCurveTo(headX+30,y+14,headX+35,y+11);ctx.stroke();
+
+    // Eye
+    ctx.fillStyle=C.eye;ctx.beginPath();ctx.arc(headX+11,y+7,7,0,Math.PI*2);ctx.fill();
+    if(this.eyeOpen){
+      const ig=ctx.createRadialGradient(headX+10,y+6,0,headX+11,y+7,5.5);
+      ig.addColorStop(0,'rgba(160,255,120,0.9)');ig.addColorStop(0.3,C.iris);ig.addColorStop(1,'rgba(0,25,8,1)');
+      ctx.fillStyle=ig;ctx.beginPath();ctx.arc(headX+11,y+7,5.5,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#000605';ctx.beginPath();ctx.ellipse(headX+11.5,y+7,2.5,3,-0.1,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.94)';ctx.beginPath();ctx.arc(headX+13,y+5,1.6,0,Math.PI*2);ctx.fill();
+    }
+
+    // Duck legs (crouched bent position)
     const dHip=y+DUCK_H-2;
-    this._drawLeg(x+14,dHip,(t+0.5)%1,C,true);
-    this._drawLeg(x+26,dHip,t,C,false);
+    this._drawLegArticulated(x+18,dHip,(t+0.5)%1,C,true);
+    this._drawLegArticulated(x+30,dHip,t,C,false);
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  CACTUS
+//  CACTUS  — Organic procedural generation, no rectangles
 // ═══════════════════════════════════════════════════════════════
 class Cactus {
   constructor(x,ctx,variant,isNight){
     this.x=x;this.ctx=ctx;this.dead=false;this.isNight=isNight;
-    const s=[{w:30,h:58,t:1},{w:56,h:64,t:2},{w:78,h:70,t:3}][Math.min(variant,2)];
-    this.width=s.w;this.height=s.h;this.trunks=s.t;
+    const configs=[
+      {w:28,h:60,arms:0},   // single tall trunk
+      {w:52,h:66,arms:1},   // one arm
+      {w:74,h:72,arms:2},   // two arms
+    ];
+    const cfg=configs[Math.min(variant,2)];
+    this.width=cfg.w; this.height=cfg.h;
     this.y=GY-this.height;
+    // Procedural geometry seed
+    this.seed=Math.random()*1000;
+    this.armCount=cfg.arms;
+    this._buildGeometry();
   }
-  update(dt,speed){this.x-=speed*dt;if(this.x+this.width<-80)this.dead=true}
-  get hitbox(){return{x:this.x+5,y:this.y+3,w:this.width-10,h:this.height-3}}
-  draw(){
-    const ctx=this.ctx,n=this.isNight;
-    const main=n?'#2a6292':'#2e7028';
-    const light=n?'#52a2d4':'#52aa40';
-    const dark=n?'#103252':'#1a3e18';
-    const tw=15,sp=(this.width-tw*this.trunks)/(this.trunks+1);
 
-    // ── Ground contact shadow (cast from sun toward left) ──
-    // Shadow footprint on the ground plane
-    const shadowW=this.width*0.9+8;
-    const sg=ctx.createRadialGradient(this.x+this.width*0.5,GY+2,0,this.x+this.width*0.5,GY+2,shadowW*0.7);
-    sg.addColorStop(0,n?'rgba(5,15,50,0.32)':'rgba(0,0,0,0.28)');
-    sg.addColorStop(0.6,n?'rgba(5,15,50,0.14)':'rgba(0,0,0,0.12)');
+  _rng(n){return Math.abs(Math.sin(this.seed+n)*43758.5453)%1}
+
+  _buildGeometry(){
+    // Main trunk profile points (left and right silhouette with natural variation)
+    const h=this.height, w=10+this._rng(0)*4;
+    const baseW=w+2+this._rng(1)*3; // slightly wider at base
+    const segments=8;
+    this.trunkPts={left:[],right:[]};
+    for(let i=0;i<=segments;i++){
+      const t=i/segments;
+      const y=GY-h*(1-t);
+      // Width tapers toward top with slight organic wobble
+      const halfW=lerp(baseW,w*0.45,t)*(1+this._rng(i+10)*0.12-0.06);
+      // Add imperfection bumps
+      const bumpL=this._rng(i+20)*2.5*(1-t);
+      const bumpR=this._rng(i+30)*2.5*(1-t);
+      this.trunkPts.left.push({x:-halfW-bumpL, y:y-GY});
+      this.trunkPts.right.push({x:halfW+bumpR, y:y-GY});
+    }
+
+    // Ridges (vertical ribs)
+    this.ridges=[];
+    const ridgeCount=6+Math.floor(this._rng(5)*3);
+    for(let r=0;r<ridgeCount;r++){
+      const xOff=(r/(ridgeCount-1)-0.5)*(w*2+2);
+      this.ridges.push({x:xOff, depth:0.5+this._rng(r+40)*0.5});
+    }
+
+    // Arms
+    this.arms=[];
+    const armSides=this.armCount>=2?[-1,1]:this.armCount===1?[this._rng(8)>0.5?-1:1]:[];
+    armSides.forEach((side,ai)=>{
+      const attachT=0.35+this._rng(ai+50)*0.25; // 35-60% up the trunk
+      const armH=h*(0.22+this._rng(ai+60)*0.18);
+      const armW=w*0.62+this._rng(ai+70)*3;
+      const bendX=side*(22+this._rng(ai+80)*14); // how far the arm extends
+      const elbowT=0.55+this._rng(ai+90)*0.2; // where arm bends
+      // Generate arm profile
+      const armPts={left:[],right:[]};
+      const armSegs=6;
+      for(let i=0;i<=armSegs;i++){
+        const t=i/armSegs;
+        const hw=lerp(armW,armW*0.35,t)*(1+this._rng(ai*10+i+100)*0.1-0.05);
+        let ax,ay;
+        if(t<=elbowT){
+          // going sideways
+          ax=side*lerp(0,bendX,t/elbowT);
+          ay=-lerp(0,4,t/elbowT); // slight droop then rise
+        } else {
+          // going up
+          const tt=(t-elbowT)/(1-elbowT);
+          ax=lerp(side*bendX,side*(bendX-3),tt);
+          ay=-lerp(4,-armH,tt);
+        }
+        armPts.left.push({x:ax-hw,y:ay});
+        armPts.right.push({x:ax+hw,y:ay});
+      }
+      this.arms.push({side,attachT,armPts,armH,armW,bendX,elbowT,ridgeCount:4+Math.floor(this._rng(ai+110)*2)});
+    });
+
+    // Spines (clusters at ridges)
+    this.spines=[];
+    for(let r=0;r<this.ridges.length;r+=2){
+      const spineCount=4+Math.floor(this._rng(r+200)*4);
+      for(let s=0;s<spineCount;s++){
+        const t=(s+0.3)/(spineCount-0.4);
+        const y=(GY-h*(1-t))-GY;
+        const side=r%4<2?-1:1;
+        const halfW=lerp(baseW,w*0.45,t)+this._rng(r+s+300)*1.5;
+        this.spines.push({
+          x:side*(halfW+1)+this.ridges[r].x*0.3,
+          y,
+          angle:side*(-(0.3+this._rng(r+s+400)*0.5)),
+          length:3.5+this._rng(r+s+500)*5,
+        });
+      }
+    }
+  }
+
+  update(dt,speed){this.x-=speed*dt;if(this.x+this.width<-80)this.dead=true}
+  get hitbox(){return{x:this.x+5,y:this.y+4,w:this.width-10,h:this.height-4}}
+
+  draw(){
+    const ctx=this.ctx, n=this.isNight;
+    const cx=this.x+this.width/2; // center X
+    const main=n?'#1e5a8a':'#226020';
+    const light=n?'#4898c8':'#3e8832';
+    const dark=n?'#0c2e4a':'#142e10';
+    const highlight=n?'#72b8e0':'#70c450';
+
+    // ── Ground shadow ──
+    const shadowW=this.width*0.85+6;
+    const sg=ctx.createRadialGradient(cx,GY+2,0,cx,GY+2,shadowW*0.72);
+    sg.addColorStop(0,n?'rgba(4,12,40,0.35)':'rgba(0,0,0,0.30)');
+    sg.addColorStop(0.65,n?'rgba(4,12,40,0.14)':'rgba(0,0,0,0.12)');
     sg.addColorStop(1,'transparent');
     ctx.fillStyle=sg;
-    ctx.beginPath();ctx.ellipse(this.x+this.width*0.5,GY+3,shadowW,5,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(cx,GY+3,shadowW,5.5,0,0,Math.PI*2);ctx.fill();
 
-    // ── Long cast shadow (sun from upper-right) ──
+    // ── Cast shadow (long, angled leftward from sun) ──
     if(!n){
-      ctx.save();
-      ctx.globalAlpha=0.10;
-      ctx.fillStyle='rgba(0,0,0,1)';
-      // Shadow stretches left along ground from each trunk
-      for(let i=0;i<this.trunks;i++){
-        const tx2=this.x+sp*(i+1)+tw*i+tw*0.3;
-        ctx.beginPath();
-        ctx.moveTo(tx2-2,GY);
-        ctx.lineTo(tx2+tw*0.6+2,GY);
-        ctx.lineTo(tx2+tw*0.6+2-this.height*0.55,GY+8);
-        ctx.lineTo(tx2-2-this.height*0.55,GY+8);
-        ctx.closePath();ctx.fill();
-      }
+      ctx.save();ctx.globalAlpha=0.09;
+      ctx.fillStyle='#000';
+      ctx.beginPath();
+      ctx.moveTo(cx-8,GY);ctx.lineTo(cx+8,GY);
+      ctx.lineTo(cx+8-this.height*0.6,GY+10);
+      ctx.lineTo(cx-8-this.height*0.6,GY+10);
+      ctx.closePath();ctx.fill();
       ctx.restore();
     }
 
-    for(let i=0;i<this.trunks;i++){
-      const tx2=this.x+sp*(i+1)+tw*i;
+    // ── Soil embed at base ──
+    ctx.fillStyle=n?'rgba(8,18,36,0.5)':'rgba(36,20,6,0.42)';
+    ctx.beginPath();ctx.ellipse(cx,GY,12,4,0,0,Math.PI*2);ctx.fill();
 
-      // ── Embed base: soft soil depression at base ──
-      ctx.fillStyle=n?'rgba(10,22,40,0.45)':'rgba(40,25,8,0.38)';
-      ctx.beginPath();ctx.ellipse(tx2+tw*0.3,GY,tw*0.55,3.5,0,0,Math.PI*2);ctx.fill();
+    // Draw arms (behind trunk)
+    this.arms.forEach((arm,ai)=>{
+      if(arm.side<0) this._drawArm(ctx,cx,arm,main,light,dark,highlight,n);
+    });
 
-      ctx.fillStyle=dark;this._rr(tx2+tw*0.5,this.y+10,tw*0.5,this.height-10,3);ctx.fill();
-      const tg=ctx.createLinearGradient(tx2,this.y,tx2+tw*0.58,this.y+this.height);
-      tg.addColorStop(0,light);tg.addColorStop(0.3,main);tg.addColorStop(1,dark);
-      ctx.fillStyle=tg;this._rr(tx2,this.y+10,tw*0.62,this.height-10,4);ctx.fill();
-      ctx.fillStyle=light;ctx.globalAlpha=0.55;ctx.fillRect(tx2+2,this.y+15,2.5,this.height-26);ctx.globalAlpha=1;
-      ctx.strokeStyle=dark;ctx.lineWidth=0.7;ctx.globalAlpha=0.35;
-      for(let r=0;r<5;r++){ctx.beginPath();ctx.moveTo(tx2+2,this.y+18+r*9);ctx.lineTo(tx2+tw*0.55-2,this.y+18+r*9);ctx.stroke()}
-      ctx.globalAlpha=1;
-      // Needles
-      ctx.strokeStyle=light;ctx.lineWidth=0.8;ctx.globalAlpha=0.6;
-      for(let r=0;r<4;r++){
-        ctx.beginPath();ctx.moveTo(tx2,this.y+20+r*10);ctx.lineTo(tx2-5,this.y+18+r*10);ctx.stroke();
-        ctx.beginPath();ctx.moveTo(tx2+tw*0.62,this.y+22+r*10);ctx.lineTo(tx2+tw*0.62+5,this.y+20+r*10);ctx.stroke();
+    // ── Main trunk ──
+    this._drawTrunk(ctx,cx,main,light,dark,highlight,n,this.trunkPts,this.ridges,0,this.height);
+
+    // Draw arms (in front of trunk for right side)
+    this.arms.forEach((arm,ai)=>{
+      if(arm.side>0) this._drawArm(ctx,cx,arm,main,light,dark,highlight,n);
+    });
+
+    // ── Spines ──
+    ctx.save();
+    ctx.strokeStyle=n?'rgba(180,210,240,0.75)':'rgba(230,240,200,0.8)';
+    ctx.lineWidth=0.7;
+    this.spines.forEach(sp=>{
+      const wx=cx+sp.x, wy=GY+sp.y;
+      ctx.save();ctx.translate(wx,wy);ctx.rotate(sp.angle);
+      ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(sp.length,0);ctx.stroke();
+      // spine tip dot
+      ctx.fillStyle=n?'rgba(180,210,240,0.5)':'rgba(240,248,210,0.6)';
+      ctx.beginPath();ctx.arc(sp.length,0,0.7,0,Math.PI*2);ctx.fill();
+      ctx.restore();
+    });
+    ctx.restore();
+
+    // ── Top cap (rounded crown) ──
+    const topG=ctx.createRadialGradient(cx-2,GY-this.height+4,1,cx,GY-this.height+6,9);
+    topG.addColorStop(0,highlight);topG.addColorStop(0.5,light);topG.addColorStop(1,main);
+    ctx.fillStyle=topG;
+    ctx.beginPath();ctx.ellipse(cx,GY-this.height+5,7,6,0,0,Math.PI*2);ctx.fill();
+  }
+
+  _drawTrunk(ctx,cx,main,light,dark,highlight,n,pts,ridges,yOff,h){
+    const leftPts=pts.left, rightPts=pts.right;
+    // Main body gradient (lit from upper right)
+    const bodyG=ctx.createLinearGradient(cx-14,GY-h,cx+14,GY);
+    bodyG.addColorStop(0,light);bodyG.addColorStop(0.3,main);bodyG.addColorStop(0.7,main);bodyG.addColorStop(1,dark);
+    ctx.fillStyle=bodyG;
+    // Build silhouette from profile points
+    ctx.beginPath();
+    ctx.moveTo(cx+leftPts[0].x, GY+leftPts[0].y+yOff);
+    leftPts.forEach((p,i)=>{
+      if(i>0){
+        const prev=leftPts[i-1];
+        const mx=(prev.x+p.x)/2, my=(prev.y+p.y)/2;
+        ctx.quadraticCurveTo(cx+prev.x,GY+prev.y+yOff,cx+mx,GY+my+yOff);
       }
-      ctx.globalAlpha=1;
-      if(i===0){
-        const ax=tx2-13,ay=this.y+this.height*0.36;
-        const ag=ctx.createLinearGradient(ax,this.y+8,ax+13,ay);
-        ag.addColorStop(0,light);ag.addColorStop(1,dark);
-        ctx.fillStyle=ag;ctx.fillRect(ax,ay-2,15,10);
-        this._rr(ax,this.y+10,11,ay-this.y-2,3);ctx.fill();
-        ctx.fillStyle=light;ctx.globalAlpha=0.5;ctx.fillRect(ax+1,this.y+12,2,ay-this.y-6);ctx.globalAlpha=1;
-        ctx.fillStyle=main;ctx.beginPath();ctx.moveTo(ax+4,this.y+10);ctx.lineTo(ax-4,this.y+4);ctx.lineTo(ax+10,this.y+4);ctx.closePath();ctx.fill();
+    });
+    ctx.lineTo(cx+leftPts[leftPts.length-1].x,GY+leftPts[leftPts.length-1].y+yOff);
+    // right side reversed
+    for(let i=rightPts.length-1;i>=0;i--){
+      const p=rightPts[i];
+      if(i<rightPts.length-1){
+        const next=rightPts[i+1];
+        const mx=(next.x+p.x)/2, my=(next.y+p.y)/2;
+        ctx.quadraticCurveTo(cx+next.x,GY+next.y+yOff,cx+mx,GY+my+yOff);
       }
-      if(i===this.trunks-1){
-        const ax=tx2+tw-2,ay=this.y+this.height*0.40;
-        const ag=ctx.createLinearGradient(ax,this.y+12,ax+14,ay);
-        ag.addColorStop(0,light);ag.addColorStop(1,dark);
-        ctx.fillStyle=ag;ctx.fillRect(ax,ay-2,15,10);
-        this._rr(ax,this.y+12,11,ay-this.y-4,3);ctx.fill();
-        ctx.fillStyle=light;ctx.globalAlpha=0.5;ctx.fillRect(ax+8,this.y+14,2,ay-this.y-8);ctx.globalAlpha=1;
-        ctx.fillStyle=main;ctx.beginPath();ctx.moveTo(ax+7,this.y+12);ctx.lineTo(ax+14,this.y+6);ctx.lineTo(ax+2,this.y+6);ctx.closePath();ctx.fill();
-      }
-      const tsg=ctx.createLinearGradient(tx2+tw*0.4,this.y,tx2+tw*0.6,this.y+14);
-      tsg.addColorStop(0,light);tsg.addColorStop(1,main);
-      ctx.fillStyle=tsg;ctx.beginPath();ctx.moveTo(tx2+tw/2,this.y);ctx.lineTo(tx2-2,this.y+14);ctx.lineTo(tx2+tw+2,this.y+14);ctx.closePath();ctx.fill();
+    }
+    ctx.closePath();ctx.fill();
+
+    // Shadow face (right side darker)
+    const shadowG=ctx.createLinearGradient(cx,GY-h,cx+16,GY);
+    shadowG.addColorStop(0,'transparent');shadowG.addColorStop(0.5,dark+'88');shadowG.addColorStop(1,dark);
+    ctx.fillStyle=shadowG;
+    ctx.beginPath();
+    const midPts=leftPts.map((p,i)=>({x:(p.x+rightPts[i].x)/2+(rightPts[i].x-p.x)*0.05, y:p.y}));
+    ctx.moveTo(cx+midPts[0].x,GY+midPts[0].y+yOff);
+    midPts.forEach((p,i)=>{if(i>0) ctx.lineTo(cx+p.x,GY+p.y+yOff);});
+    rightPts.slice().reverse().forEach(p=>ctx.lineTo(cx+p.x,GY+p.y+yOff));
+    ctx.closePath();ctx.fill();
+
+    // Vertical ridge grooves
+    ctx.strokeStyle=dark; ctx.lineWidth=0.6; ctx.globalAlpha=0.25;
+    ridges.forEach(r=>{
+      const rx=cx+r.x;
+      // Clip-style groove from base to near top
+      ctx.beginPath();
+      ctx.moveTo(rx,GY+yOff);
+      ctx.bezierCurveTo(rx+r.depth,GY-h*0.25+yOff,rx-r.depth,GY-h*0.55+yOff,rx,GY-h*0.88+yOff);
+      ctx.stroke();
+    });
+    ctx.globalAlpha=1;
+
+    // Scars/damage patches
+    for(let s=0;s<2;s++){
+      const sy=GY-(this._rng(s+600)*0.7+0.15)*h+yOff;
+      const sx=cx+(this._rng(s+610)-0.5)*14;
+      ctx.fillStyle=n?'rgba(8,30,55,0.22)':'rgba(10,28,8,0.18)';
+      ctx.beginPath();ctx.ellipse(sx,sy,5+this._rng(s+620)*4,2.5+this._rng(s+630)*2,this._rng(s+640)*0.6-0.3,0,Math.PI*2);ctx.fill();
+    }
+
+    // Highlight stripe (lit edge)
+    ctx.strokeStyle=highlight; ctx.lineWidth=1.4; ctx.globalAlpha=0.22;
+    ctx.beginPath();
+    leftPts.forEach((p,i)=>{
+      const x2=cx+p.x+3, y2=GY+p.y+yOff;
+      if(i===0) ctx.moveTo(x2,y2); else ctx.lineTo(x2,y2);
+    });
+    ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+
+  _drawArm(ctx,cx,arm,main,light,dark,highlight,n){
+    const aY=GY-(arm.attachT)*this.height;
+    const pts=arm.armPts;
+    const lp=pts.left, rp=pts.right;
+
+    // Arm body
+    const armG=ctx.createLinearGradient(cx+arm.side*arm.bendX*0.3,aY-4,cx+arm.side*arm.bendX,aY-arm.armH);
+    armG.addColorStop(0,main);armG.addColorStop(0.4,light);armG.addColorStop(1,main);
+    ctx.fillStyle=armG;
+    ctx.beginPath();
+    ctx.moveTo(cx+lp[0].x,aY+lp[0].y);
+    lp.forEach((p,i)=>{if(i>0) ctx.lineTo(cx+p.x,aY+p.y);});
+    ctx.lineTo(cx+rp[rp.length-1].x,aY+rp[rp.length-1].y);
+    for(let i=rp.length-1;i>=0;i--) ctx.lineTo(cx+rp[i].x,aY+rp[i].y);
+    ctx.closePath();ctx.fill();
+
+    // Arm shadow
+    const shadG=ctx.createLinearGradient(cx,aY,cx+arm.side*arm.bendX,aY-arm.armH*0.5);
+    shadG.addColorStop(0,dark+'60');shadG.addColorStop(1,'transparent');
+    ctx.fillStyle=shadG;
+    ctx.beginPath();
+    const midL=lp.map((p,i)=>({x:(p.x+rp[i].x)/2+rp[i].x*0.08,y:p.y}));
+    ctx.moveTo(cx+midL[0].x,aY+midL[0].y);
+    midL.forEach((p,i)=>{if(i>0)ctx.lineTo(cx+p.x,aY+p.y);});
+    for(let i=rp.length-1;i>=0;i--)ctx.lineTo(cx+rp[i].x,aY+rp[i].y);
+    ctx.closePath();ctx.fill();
+
+    // Arm ridges
+    ctx.strokeStyle=dark;ctx.lineWidth=0.5;ctx.globalAlpha=0.22;
+    for(let r=0;r<arm.ridgeCount;r++){
+      const t=(r+0.5)/arm.ridgeCount;
+      const ax=cx+lerp(lp[0].x,lp[lp.length-1].x,t);
+      const ay=aY+lerp(0,lp[lp.length-1].y,t);
+      ctx.beginPath();ctx.moveTo(ax,ay-6);ctx.lineTo(ax,ay+6);ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+
+    // Arm top cap
+    const tipX=cx+lp[lp.length-1].x+(rp[rp.length-1].x-lp[lp.length-1].x)*0.5;
+    const tipY=aY+lp[lp.length-1].y;
+    const armCapG=ctx.createRadialGradient(tipX-1,tipY-2,0,tipX,tipY,5);
+    armCapG.addColorStop(0,highlight);armCapG.addColorStop(1,main);
+    ctx.fillStyle=armCapG;
+    ctx.beginPath();ctx.ellipse(tipX,tipY,4.5,4,0,0,Math.PI*2);ctx.fill();
+
+    // Arm spines
+    ctx.strokeStyle=n?'rgba(180,210,240,0.7)':'rgba(230,240,200,0.75)';ctx.lineWidth=0.65;
+    for(let s=0;s<5;s++){
+      const t=(s+0.5)/5;
+      const ax=cx+lerp(lp[0].x,lp[lp.length-1].x,t);
+      const ay=aY+lerp(lp[0].y,lp[lp.length-1].y,t);
+      const aw=lerp(lp[0].x-rp[0].x,lp[lp.length-1].x-rp[lp.length-1].x,t)*0.5;
+      const sideSign=s%2===0?-1:1;
+      ctx.beginPath();ctx.moveTo(ax+aw*0.5*sideSign,ay);ctx.lineTo(ax+aw*0.5*sideSign+sideSign*4.5,ay-2);ctx.stroke();
     }
   }
+
   _rr(x,y,w,h,r){
     const ctx=this.ctx;r=Math.min(r,w/2,h/2);
     ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
@@ -1973,90 +2541,278 @@ class Cactus {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  BIRD
+//  BIRD  — Realistic anatomy: wing-bone structure, primary/secondary feathers
 // ═══════════════════════════════════════════════════════════════
 class Bird {
   constructor(x,ctx,level,isNight){
     this.x=x;this.ctx=ctx;this.dead=false;this.isNight=isNight;
-    this.width=60;this.height=32;
+    this.width=64;this.height=34;
     const hs=[GY-DUCK_H-16,GY-DINO_H-24,GY-DINO_H-94];
-    this.y=hs[Math.min(level,2)];this.wc=0;
+    this.y=hs[Math.min(level,2)];
+    this.wc=Math.random(); // wing cycle
     this.bodyBob=Math.random()*Math.PI*2;
+    this.tailWag=Math.random()*Math.PI*2;
+    this.eyeBlink=0;
   }
   update(dt,speed){
     this.x-=speed*dt;if(this.x+this.width<-80)this.dead=true;
-    this.wc=(this.wc+3.8*dt)%1;
-    this.bodyBob+=dt*2.2;
+    this.wc=(this.wc+3.2*dt)%1;
+    this.bodyBob+=dt*2.4;
+    this.tailWag+=dt*3.8;
+    this.eyeBlink+=dt;
+    if(this.eyeBlink>4.2) this.eyeBlink=0;
   }
-  get hitbox(){return{x:this.x+7,y:this.y+4,w:this.width-14,h:this.height-8}}
-  draw(){
-    const ctx=this.ctx,n=this.isNight;
-    const bc=n?'#5092c4':'#6a4828';
-    const bL=n?'#82badf':'#8a6040';
-    const bD=n?'#2a5882':'#3a2010';
-    const cx=this.x+this.width/2, cy=this.y+this.height/2+4+Math.sin(this.bodyBob)*2.5;
-    const wa=Math.sin(this.wc*Math.PI*2)*32;
+  get hitbox(){return{x:this.x+8,y:this.y+5,w:this.width-16,h:this.height-10}}
 
-    // Perspective shadow on ground below bird
-    const altitudeFactor=clamp(1-(cy-GY+DINO_H+40)/(DINO_H+120),0,1);
-    const bShadW=this.width*(0.35+altitudeFactor*0.15);
-    const bsg=ctx.createRadialGradient(cx,GY+3,0,cx,GY+3,bShadW);
-    bsg.addColorStop(0,n?`rgba(5,20,55,${0.18*altitudeFactor})`:`rgba(0,0,0,${0.16*altitudeFactor})`);
+  draw(){
+    const ctx=this.ctx, n=this.isNight;
+    // Color palette
+    const body =n?'#3a6ea0':'#4a3020';
+    const bodyL=n?'#6898c8':'#6e5030';
+    const bodyD=n?'#1e4070':'#281408';
+    const wing =n?'#2e5888':'#3c2416';
+    const wingL=n?'#5a88c0':'#584030';
+    const beak ='#d8a020';
+    const beakD='#a07010';
+    const cx=this.x+this.width/2;
+    const cy=this.y+this.height/2+3+Math.sin(this.bodyBob)*2.2;
+
+    // Wing flap angle — full sine cycle, maps to anatomically plausible range
+    const flapT=this.wc*Math.PI*2;
+    const flapAngle=Math.sin(flapT)*0.72; // radians, -0.72 to 0.72
+
+    // ── Ground shadow ──
+    const altFactor=clamp(1-(this.y+DINO_H*0.5-GY+120)/200,0,1);
+    const bSW=26*(0.5+altFactor*0.5);
+    const bsg=ctx.createRadialGradient(cx,GY+3,0,cx,GY+3,bSW+6);
+    bsg.addColorStop(0,n?`rgba(4,16,50,${0.20*altFactor})`:`rgba(0,0,0,${0.18*altFactor})`);
     bsg.addColorStop(1,'transparent');
-    ctx.fillStyle=bsg;
-    ctx.beginPath();ctx.ellipse(cx,GY+3,bShadW,4,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=bsg;ctx.beginPath();ctx.ellipse(cx,GY+3,bSW+6,4,0,0,Math.PI*2);ctx.fill();
 
     ctx.save();ctx.translate(cx,cy);
-    // Wing shadow
-    ctx.save();ctx.globalAlpha=0.15;
-    ctx.fillStyle='rgba(0,0,0,0.5)';
-    ctx.beginPath();ctx.ellipse(0,8,20,5,0,0,Math.PI*2);ctx.fill();
+
+    // ── BACK WING (behind body, slightly smaller, lower alpha) ──
+    ctx.save();ctx.globalAlpha=0.62;
+    this._drawWing(ctx,flapAngle+0.15,1,wing,wingL,bodyD,n,true);
     ctx.restore();
-    // Wings
-    [-1,1].forEach((dir,idx)=>{
-      ctx.save();
-      if(idx===1){ctx.globalAlpha=0.52;ctx.rotate(-wa*Math.PI/180*0.65)}
-      else ctx.rotate(-wa*Math.PI/180);
-      const wg=ctx.createLinearGradient(0,0,dir*-25,14);
-      wg.addColorStop(0,bL);wg.addColorStop(0.5,bc);wg.addColorStop(1,bD);
-      ctx.fillStyle=wg;
-      ctx.beginPath();ctx.moveTo(0,0);
-      ctx.bezierCurveTo(dir*-6,-3,dir*-25,5,dir*-23,16);
-      ctx.bezierCurveTo(dir*-15,20,dir*-4,10,0,4);
+
+    // ── BODY ──
+    // Torso - egg shaped, wider at chest
+    const bodyG=ctx.createLinearGradient(-16,-9,16,9);
+    bodyG.addColorStop(0,bodyL);bodyG.addColorStop(0.45,body);bodyG.addColorStop(1,bodyD);
+    ctx.fillStyle=bodyG;
+    ctx.beginPath();
+    ctx.moveTo(-12,0);
+    ctx.bezierCurveTo(-14,-9,-4,-12,5,-10);
+    ctx.bezierCurveTo(14,-8,17,-2,16,4);
+    ctx.bezierCurveTo(15,10,8,12,-2,11);
+    ctx.bezierCurveTo(-10,10,-12,6,-12,0);
+    ctx.closePath();ctx.fill();
+    // Chest highlight
+    ctx.fillStyle=bodyL;ctx.globalAlpha=0.32;
+    ctx.beginPath();ctx.ellipse(3,-5,7,4.5,0.2,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+    // Wing shoulder bump
+    ctx.fillStyle=bodyD;ctx.globalAlpha=0.28;
+    ctx.beginPath();ctx.ellipse(-5,-7,5,3.5,-0.3,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+
+    // ── TAIL FEATHERS ──
+    const tailWagAngle=Math.sin(this.tailWag)*0.12;
+    ctx.save();ctx.rotate(tailWagAngle);
+    // Primary tail fan
+    const tailColors=[bodyD,wing,bodyD,body];
+    for(let f=0;f<4;f++){
+      const fa=(f-1.5)*0.14;
+      const fl=12+f*0.8;
+      ctx.save();ctx.rotate(fa);
+      const tfG=ctx.createLinearGradient(-14,-2,-14-fl,4+f);
+      tfG.addColorStop(0,body);tfG.addColorStop(1,tailColors[f]);
+      ctx.fillStyle=tfG;
+      ctx.beginPath();
+      ctx.moveTo(-12,1);
+      ctx.bezierCurveTo(-12-fl*0.4,2-f*0.5,-12-fl*0.8,3+f*0.3,-12-fl,2+f*0.8);
+      ctx.bezierCurveTo(-12-fl*0.8,3.5+f,-12-fl*0.4,3,- 12,2);
       ctx.closePath();ctx.fill();
-      // Feather quills
-      ctx.strokeStyle=bD;ctx.lineWidth=0.7;ctx.globalAlpha=idx===0?0.5:0.3;
-      for(let f=0;f<6;f++){ctx.beginPath();ctx.moveTo(0,f*1.4);ctx.lineTo(dir*-(7+f*3.5),3+f*3);ctx.stroke()}
-      ctx.globalAlpha=1;ctx.restore();
+      // Feather shaft
+      ctx.strokeStyle=bodyD;ctx.lineWidth=0.5;ctx.globalAlpha=0.35;
+      ctx.beginPath();ctx.moveTo(-12,1.5);ctx.lineTo(-12-fl*0.9,2.5+f*0.6);ctx.stroke();
+      ctx.globalAlpha=1;
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // ── NECK / HEAD ──
+    // Neck
+    const neckG=ctx.createLinearGradient(8,-8,18,-18);
+    neckG.addColorStop(0,body);neckG.addColorStop(1,bodyL);
+    ctx.fillStyle=neckG;
+    ctx.beginPath();
+    ctx.moveTo(9,-7);
+    ctx.bezierCurveTo(10,-12,14,-18,18,-20);
+    ctx.bezierCurveTo(22,-22,25,-18,22,-14);
+    ctx.bezierCurveTo(20,-10,14,-8,11,-6);
+    ctx.closePath();ctx.fill();
+
+    // Skull / head
+    const headG=ctx.createRadialGradient(18,-21,0,18,-20,10);
+    headG.addColorStop(0,bodyL);headG.addColorStop(0.5,body);headG.addColorStop(1,bodyD);
+    ctx.fillStyle=headG;
+    ctx.beginPath();
+    ctx.moveTo(12,-16);
+    ctx.bezierCurveTo(10,-24,18,-28,26,-24);
+    ctx.bezierCurveTo(32,-20,30,-14,26,-12);
+    ctx.bezierCurveTo(22,-10,14,-12,12,-16);
+    ctx.closePath();ctx.fill();
+    // Head highlight
+    ctx.fillStyle=bodyL;ctx.globalAlpha=0.28;
+    ctx.beginPath();ctx.ellipse(19,-22,5.5,3.5,0.2,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+
+    // ── BEAK ──
+    // Upper mandible
+    ctx.fillStyle=beak;
+    ctx.beginPath();
+    ctx.moveTo(25,-16);ctx.bezierCurveTo(30,-16,38,-14,38,-12);
+    ctx.bezierCurveTo(38,-10,31,-11,25,-14);ctx.closePath();ctx.fill();
+    // Lower mandible
+    ctx.fillStyle=beakD;
+    ctx.beginPath();
+    ctx.moveTo(25,-14);ctx.bezierCurveTo(30,-14,36,-12,37,-11);
+    ctx.bezierCurveTo(36,-9,29,-10,25,-12);ctx.closePath();ctx.fill();
+    // Beak ridge line
+    ctx.strokeStyle=beakD;ctx.lineWidth=0.6;
+    ctx.beginPath();ctx.moveTo(25,-14);ctx.lineTo(37,-12);ctx.stroke();
+    // Mouth crease
+    ctx.strokeStyle=bodyD;ctx.lineWidth=0.8;ctx.globalAlpha=0.5;
+    ctx.beginPath();ctx.moveTo(25,-14);ctx.lineTo(34,-13);ctx.stroke();
+    ctx.globalAlpha=1;
+
+    // ── EYE ──
+    const eyeOpen=this.eyeBlink<3.8||this.eyeBlink>4.1;
+    ctx.fillStyle='rgba(240,235,210,0.95)';
+    ctx.beginPath();ctx.ellipse(20,-20,4,3.2,0.1,0,Math.PI*2);ctx.fill();
+    if(eyeOpen){
+      // Iris
+      const eyeG=ctx.createRadialGradient(19.5,-20.5,0,20,-20,3);
+      eyeG.addColorStop(0,n?'rgba(30,100,200,0.95)':'rgba(60,30,8,0.95)');
+      eyeG.addColorStop(0.6,n?'rgba(10,50,120,1)':'rgba(25,12,4,1)');
+      eyeG.addColorStop(1,'rgba(0,0,0,1)');
+      ctx.fillStyle=eyeG;ctx.beginPath();ctx.ellipse(20,-20,3,2.5,0.1,0,Math.PI*2);ctx.fill();
+      // Pupil
+      ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(20.5,-20,1.5,1.8,0.1,0,Math.PI*2);ctx.fill();
+      // Specular
+      ctx.fillStyle='rgba(255,255,255,0.95)';ctx.beginPath();ctx.arc(21.5,-21.5,1.2,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.4)';ctx.beginPath();ctx.arc(19,-19.5,0.6,0,Math.PI*2);ctx.fill();
+    } else {
+      ctx.strokeStyle=bodyD;ctx.lineWidth=1.4;
+      ctx.beginPath();ctx.moveTo(17,-20);ctx.quadraticCurveTo(20,-17.5,23,-20);ctx.stroke();
+    }
+    // Eye ring
+    ctx.strokeStyle=bodyD;ctx.lineWidth=0.8;ctx.globalAlpha=0.4;
+    ctx.beginPath();ctx.ellipse(20,-20,4,3.2,0.1,0,Math.PI*2);ctx.stroke();
+    ctx.globalAlpha=1;
+
+    // ── FRONT WING (on top of body) ──
+    this._drawWing(ctx,flapAngle,1,wing,wingL,bodyD,n,false);
+
+    // ── FEET ──
+    const flapAmt=Math.abs(Math.sin(flapT));
+    const footDrop=4+flapAmt*5;
+    ctx.strokeStyle=beak;ctx.lineWidth=1.4;
+    [[2,8],[10,8]].forEach(([fx,fy])=>{
+      ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(fx,fy+footDrop);ctx.stroke();
+      // Toes
+      [[-3,2],[0,3],[3,2]].forEach(([tx,ty])=>{
+        ctx.beginPath();ctx.moveTo(fx,fy+footDrop);ctx.lineTo(fx+tx,fy+footDrop+ty);ctx.stroke();
+      });
     });
-    // Body
-    const bog=ctx.createLinearGradient(-16,-9,16,9);
-    bog.addColorStop(0,bL);bog.addColorStop(0.5,bc);bog.addColorStop(1,bD);
-    ctx.fillStyle=bog;ctx.beginPath();ctx.ellipse(0,0,16,8,-0.15,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=bL;ctx.globalAlpha=0.38;ctx.beginPath();ctx.ellipse(2,1,9,5,0.1,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
-    // Tail
-    ctx.fillStyle=bD;ctx.beginPath();ctx.moveTo(-14,2);ctx.lineTo(-25,-2);ctx.lineTo(-23,7);ctx.lineTo(-12,6);ctx.closePath();ctx.fill();
-    ctx.fillStyle=bc;ctx.beginPath();ctx.moveTo(-14,2);ctx.lineTo(-23,1);ctx.lineTo(-21,7);ctx.closePath();ctx.fill();
-    // Head
-    const hg=ctx.createRadialGradient(10,-7,0,12,-5,9);
-    hg.addColorStop(0,bL);hg.addColorStop(1,bD);
-    ctx.fillStyle=hg;ctx.beginPath();ctx.arc(12,-5,8,0,Math.PI*2);ctx.fill();
-    // Beak
-    ctx.fillStyle='#e8b020';ctx.beginPath();ctx.moveTo(18,-6);ctx.lineTo(28,-4);ctx.lineTo(18,-2);ctx.closePath();ctx.fill();
-    ctx.fillStyle='#c09010';ctx.beginPath();ctx.moveTo(18,-2);ctx.lineTo(27,-1);ctx.lineTo(18,0);ctx.closePath();ctx.fill();
-    ctx.strokeStyle='#a07808';ctx.lineWidth=0.7;ctx.beginPath();ctx.moveTo(18,-2);ctx.lineTo(27,-2.5);ctx.stroke();
-    // Eye
-    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(15,-7,3.5,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle=n?'#0040a0':'#101010';ctx.beginPath();ctx.arc(15.5,-7,2,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(16.5,-8,0.9,0,Math.PI*2);ctx.fill();
-    // Feet
-    const fd=3+Math.abs(Math.sin(this.wc*Math.PI*2))*4;
-    ctx.strokeStyle='#c09010';ctx.lineWidth=1.5;
-    [[1,8],[7,8]].forEach(([fx,fy])=>{
-      ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(fx,fy+fd);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(fx,fy+fd);ctx.lineTo(fx-3,fy+fd+2);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(fx,fy+fd);ctx.lineTo(fx+3,fy+fd+2);ctx.stroke();
-    });
+
+    ctx.restore();
+  }
+
+  _drawWing(ctx,angle,dir,wing,wingL,wingD,n,isBack){
+    ctx.save();
+    ctx.rotate(angle * dir);
+
+    // Humerus line (upper arm bone direction)
+    const humerusL=18;
+    const radiusL=15;
+    const handL=10;
+
+    // Approximate anatomical wing positions
+    const hx2=-2+humerusL*Math.cos(-0.35);
+    const hy2=-7+humerusL*Math.sin(-0.35);
+    const rx2=hx2+radiusL*Math.cos(0.5+angle*0.3);
+    const ry2=hy2+radiusL*Math.sin(0.5+angle*0.3);
+
+    // Secondary feathers (arm coverts)
+    const secCount=7;
+    for(let f=0;f<secCount;f++){
+      const t=f/(secCount-1);
+      const sx=lerp(-2,hx2,t), sy=lerp(-7,hy2,t);
+      const nx=lerp(hx2,rx2,t)-sx, ny=lerp(hy2,ry2,t)-sy;
+      const len=Math.sqrt(nx*nx+ny*ny)||1;
+      const perpX=-ny/len, perpY=nx/len;
+      const fLen=10+Math.sin(t*Math.PI)*4;
+      const fAngle=-0.5+angle*0.15;
+      const wG=ctx.createLinearGradient(sx,sy,sx+perpX*fLen*0.8,sy+perpY*fLen*0.8);
+      wG.addColorStop(0,t<0.5?wingL:wing);wG.addColorStop(1,wingD);
+      ctx.fillStyle=wG;
+      ctx.beginPath();
+      ctx.moveTo(sx,sy);
+      ctx.bezierCurveTo(
+        sx+perpX*fLen*0.3-nx/len*2,sy+perpY*fLen*0.3-ny/len*2,
+        sx+perpX*fLen*0.8,sy+perpY*fLen*0.8,
+        sx+perpX*fLen,sy+perpY*fLen
+      );
+      ctx.bezierCurveTo(
+        sx+perpX*(fLen-2)+nx/len*3,sy+perpY*(fLen-2)+ny/len*3,
+        sx+nx/len*3+perpX*2,sy+ny/len*3+perpY*2,
+        sx,sy
+      );
+      ctx.closePath();ctx.fill();
+      // Feather quill
+      if(!isBack){
+        ctx.strokeStyle=wingD;ctx.lineWidth=0.5;ctx.globalAlpha=0.35;
+        ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+perpX*fLen*0.85,sy+perpY*fLen*0.85);ctx.stroke();
+        ctx.globalAlpha=1;
+      }
+    }
+
+    // Primary feathers (hand/manus)
+    const primCount=6;
+    for(let f=0;f<primCount;f++){
+      const t=f/(primCount-1);
+      const sx=lerp(hx2,rx2,t*0.6+0.4), sy=lerp(hy2,ry2,t*0.6+0.4);
+      const angOff=angle*0.4+t*0.6+0.3;
+      const fLen=12+f*1.2;
+      const px=Math.cos(angOff)*fLen, py=Math.sin(angOff)*fLen;
+      const wG=ctx.createLinearGradient(sx,sy,sx+px,sy+py);
+      wG.addColorStop(0,wing);wG.addColorStop(1,wingD);
+      ctx.fillStyle=wG;
+      ctx.beginPath();
+      ctx.moveTo(sx,sy);
+      ctx.bezierCurveTo(sx+px*0.3-py*0.15,sy+py*0.3+px*0.15,sx+px*0.8,sy+py*0.8,sx+px,sy+py);
+      ctx.bezierCurveTo(sx+px*0.7+py*0.1,sy+py*0.7-px*0.1,sx+px*0.2+py*0.12,sy+py*0.2-px*0.12,sx,sy);
+      ctx.closePath();ctx.fill();
+      // Quill
+      if(!isBack){
+        ctx.strokeStyle=wingD;ctx.lineWidth=0.5;ctx.globalAlpha=0.3;
+        ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+px*0.9,sy+py*0.9);ctx.stroke();
+        ctx.globalAlpha=1;
+      }
+    }
+
+    // Wing covert fill (smooth upper surface)
+    const covertG=ctx.createLinearGradient(-2,-7,hx2,hy2);
+    covertG.addColorStop(0,wingL);covertG.addColorStop(0.5,wing);covertG.addColorStop(1,wingD);
+    ctx.fillStyle=covertG;ctx.globalAlpha=0.5;
+    ctx.beginPath();
+    ctx.moveTo(-4,-5);ctx.bezierCurveTo(-2,-9,hx2-4,hy2-2,hx2,hy2);
+    ctx.bezierCurveTo(hx2+4,hy2+2,-1,-4,-4,-3);ctx.closePath();ctx.fill();
+    ctx.globalAlpha=1;
+
     ctx.restore();
   }
 }
