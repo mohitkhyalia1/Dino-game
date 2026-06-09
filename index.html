@@ -194,9 +194,9 @@ body.playing #cinema-top,body.playing #cinema-bot{height:0}
       <div id="intro-logo">DinoRun</div>
       <div id="intro-sub">Cinematic Edition</div>
       <div id="intro-keys">
-        <div class="ik-row"><span class="ik-key">SPACE</span><span>/ Tap — Jump</span></div>
+        <div class="ik-row"><span class="ik-key">SPACE</span><span>/ Left Click / Tap — Jump</span></div>
         <div class="ik-row"><span class="ik-key">↑</span><span>mid-air — Double Jump</span></div>
-        <div class="ik-row"><span class="ik-key">↓</span><span>— Duck under birds</span></div>
+        <div class="ik-row"><span class="ik-key">↓</span><span>/ Right Click — Duck &amp; Fast-fall</span></div>
       </div>
       <button id="start-btn">
         <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><polygon points="4,2 18,10 4,18"/></svg>
@@ -240,7 +240,7 @@ body.playing #cinema-top,body.playing #cinema-bot{height:0}
 // ═══════════════════════════════════════════════════════════════
 const W=900,H=400,GY=320,GH=80;
 const DINO_X=85,DINO_W=58,DINO_H=72,DUCK_W=84,DUCK_H=38;
-const GRAV=2000,JVEL=-740;
+const GRAV=1600,JVEL=-680;
 const SPD0=340,SPDMAX=1150,SPDINC=11;
 const MILESTONE=100,BIRD_MIN=500,DNI=700;
 const MINGAP=660,MAXGAP=1350,MAXDT=0.05;
@@ -1576,8 +1576,18 @@ class Dino {
     this.landShake=0;this.rimFlash=0;
   }
   get W(){return this.isDuck?DUCK_W:DINO_W}
-  get H(){return this.isDuck?DUCK_H:DINO_H}
-  get hitbox(){const p=9;return{x:this.x+p,y:this.y+p,w:this.W-p*2,h:this.H-p*2}}
+  // H is always DINO_H — this.y never changes when ducking.
+  // Duck pose is drawn from the fixed foot anchor (GY) upward.
+  get H(){return DINO_H}
+  get hitbox(){
+    if(this.isDuck){
+      // Duck hitbox: wide and short, bottom flush with GY
+      // this.y is always GY-DINO_H; duck top = GY-DUCK_H
+      const duckTop=GY-DUCK_H;
+      return{x:this.x+4,y:duckTop+2,w:DUCK_W-8,h:DUCK_H-4};
+    }
+    const p=8;return{x:this.x+p,y:this.y+p,w:DINO_W-p*2,h:DINO_H-p*2};
+  }
 
   jump(audio){
     if(this.isDuck){this.isDuck=false;return}
@@ -1602,7 +1612,13 @@ class Dino {
     if(!this.onGround){this.vy+=GRAV*dt;this.y+=this.vy*dt}
     const floor=GY-this.H;
     if(this.y>=floor){
-      if(!wasOn){this.sqY=1.42;this.stX=0.65;this.landShake=1}
+      if(!wasOn){
+        // Harder squash when fast-falling
+        const impact=clamp(Math.abs(this.vy)/600,0,1);
+        this.sqY=lerp(1.38,1.72,impact);
+        this.stX=lerp(0.68,0.52,impact);
+        this.landShake=lerp(0.8,1.2,impact);
+      }
       this.y=floor;this.vy=0;this.onGround=true;this.jumps=0;
     }
     this.landShake=Math.max(0,this.landShake-dt*5);
@@ -1612,7 +1628,7 @@ class Dino {
     const cps=this.isDuck?12:clamp(speed/70,3.5,16);
     if(this.onGround) this.cycle=(this.cycle+cps*dt)%1;
     else this.cycle=lerp(this.cycle,0.25,dt*5);
-    this.bob=this.onGround?Math.abs(Math.sin(this.cycle*Math.PI*2))*3.8:0;
+    this.bob=this.onGround?Math.abs(Math.sin(this.cycle*Math.PI*2))*5.5:0;
     this.breathT+=dt;
     this.blinkT+=dt;
     if(this.blinkT>3.8){this.eyeOpen=false;if(this.blinkT>3.96){this.eyeOpen=true;this.blinkT=0;this.eyeX=(Math.random()-0.5)*1.5}}
@@ -1735,9 +1751,10 @@ class Dino {
     this._drawForearm(x+41,hipY-24,Math.sin(((t+0.5)%1)*Math.PI*2)*24,C);
 
     // ── HEAD + NECK ───────────────────────────────────────────
+    // Head stabilization: counter the body bob so head appears steady
     const nodDeg=air
-      ? (this.vy<0?-14:8)                            // airborne tilt
-      : Math.sin(t*Math.PI*4)*3.5+this.bob*0.4;      // running nod
+      ? (this.vy<0?-14:8)                                       // airborne tilt
+      : Math.sin(t*Math.PI*4)*2.5 - this.bob*0.55;             // running nod (counters bob)
     this._drawNeckHead(x,this.y,nodDeg,C);
 
     ctx.restore();
@@ -1751,8 +1768,8 @@ class Dino {
     const ctx=this.ctx;
     // Tail attaches at posterior of body
     const tx0=x+6, ty0=hipY-4;
-    // Inertia: tail lags behind body motion
-    const baseSwing=air?Math.sin(t*Math.PI*2)*6:Math.sin(t*Math.PI*2)*18;
+    // Inertia: tail lags behind body motion, swings opposite to front leg
+    const baseSwing=air?Math.sin(t*Math.PI*2)*6:Math.sin((t+0.5)*Math.PI*2)*22;
     const mid1Swing=baseSwing*1.4;
     const tipSwing=baseSwing*1.9;
     const baseAngle=(baseSwing)*Math.PI/180-0.18;
@@ -2151,86 +2168,176 @@ class Dino {
 
   // ── DUCK POSE ─────────────────────────────────────────────────
   _drawDuck(C){
-    const ctx=this.ctx,x=this.x,y=this.y,t=this.cycle;
+    const ctx=this.ctx,x=this.x,t=this.cycle;
+    // Foot anchor is ALWAYS at GY — never moves.
+    // All duck geometry is built upward from GY.
+    // DUCK_H=38 so top of duck silhouette is at GY-DUCK_H.
+    const footY  = GY;                  // feet always at ground
+    const legH   = 18;                  // total leg height (hip to foot-bottom)
+    const bodyBot= footY - legH;        // body bottom sits legH px above ground
+    const bodyTop= footY - DUCK_H;      // = GY-38 — top of compressed silhouette
+    const bodyMid= bodyTop + (bodyBot-bodyTop)*0.48;
 
-    // Duck silhouette - proper crouching body
-    const bg=ctx.createLinearGradient(x+2,y+2,x+DUCK_W-2,y+DUCK_H-2);
-    bg.addColorStop(0,C.bodyL);bg.addColorStop(0.5,C.body);bg.addColorStop(1,C.bodyD);
+    // ── Crouched body (wide, flat) ──
+    const bg=ctx.createLinearGradient(x+2,bodyTop,x+DUCK_W-4,bodyBot);
+    bg.addColorStop(0,C.bodyL);bg.addColorStop(0.45,C.body);bg.addColorStop(1,C.bodyD);
     ctx.fillStyle=bg;
     ctx.beginPath();
-    // Low crouching body shape
-    ctx.moveTo(x+10,y+DUCK_H-2);
-    ctx.bezierCurveTo(x+4,y+DUCK_H,x+2,y+DUCK_H-6,x+2,y+DUCK_H-10);
-    ctx.bezierCurveTo(x+2,y+DUCK_H-18,x+6,y+DUCK_H-26,x+10,y+DUCK_H-28);
-    ctx.bezierCurveTo(x+14,y+2,x+28,y+0,x+40,y+2);
-    ctx.bezierCurveTo(x+54,y+4,x+DUCK_W-2,y+10,x+DUCK_W-2,y+DUCK_H-14);
-    ctx.bezierCurveTo(x+DUCK_W-2,y+DUCK_H-6,x+DUCK_W-6,y+DUCK_H,x+DUCK_W-10,y+DUCK_H-2);
+    ctx.moveTo(x+8,bodyBot);
+    // Left side
+    ctx.bezierCurveTo(x+2,bodyBot,x+2,bodyBot-6,x+4,bodyBot-12);
+    // Upper back (low, compressed)
+    ctx.bezierCurveTo(x+6,bodyTop+4,x+20,bodyTop,x+38,bodyTop+2);
+    // Neck base area / front
+    ctx.bezierCurveTo(x+52,bodyTop+4,x+DUCK_W-4,bodyTop+8,x+DUCK_W-3,bodyMid-4);
+    // Right side down
+    ctx.bezierCurveTo(x+DUCK_W-2,bodyMid+6,x+DUCK_W-4,bodyBot-4,x+DUCK_W-8,bodyBot);
     ctx.closePath();ctx.fill();
 
-    // Belly
-    const bellyG=ctx.createRadialGradient(x+38,y+DUCK_H*0.55,1,x+38,y+DUCK_H*0.55,16);
+    // Belly highlight
+    const bellyG=ctx.createRadialGradient(x+36,bodyMid+4,1,x+36,bodyMid+4,18);
     bellyG.addColorStop(0,C.belly);bellyG.addColorStop(1,'transparent');
-    ctx.fillStyle=bellyG;ctx.globalAlpha=0.52;
-    ctx.beginPath();ctx.ellipse(x+38,y+DUCK_H*0.55,18,9,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=bellyG;ctx.globalAlpha=0.5;
+    ctx.beginPath();ctx.ellipse(x+36,bodyMid+4,20,8,0,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=1;
 
-    // Scale row
+    // Scale row on back
     ctx.fillStyle=C.scale;ctx.globalAlpha=0.75;
-    for(let i=0;i<5;i++){ctx.beginPath();ctx.ellipse(x+14+i*11,y+12,3,2,0.15,0,Math.PI*2);ctx.fill()}
+    for(let i=0;i<5;i++){ctx.beginPath();ctx.ellipse(x+14+i*11,bodyTop+7,3,2,0.15,0,Math.PI*2);ctx.fill()}
     ctx.globalAlpha=1;
-    // Dorsal spines (flat, tucked)
+
+    // Dorsal spines (flat/tucked)
     ctx.fillStyle=C.bodyD;
     for(let i=0;i<4;i++){
-      ctx.beginPath();ctx.ellipse(x+20+i*10,y+3,2.2,4,-0.12,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.ellipse(x+18+i*10,bodyTop+2,2,3.5,-0.1,0,Math.PI*2);ctx.fill();
     }
 
-    // Duck tail (tucked)
-    const hx=x+4;
+    // ── Tail (tucked low) ──
     ctx.save();
-    ctx.translate(hx,y+DUCK_H*0.35);
-    const tdG=ctx.createLinearGradient(-6,0,0,12);
+    ctx.translate(x+5, bodyTop+DUCK_H*0.42);
+    const tdG=ctx.createLinearGradient(-6,0,0,10);
     tdG.addColorStop(0,C.body);tdG.addColorStop(1,C.bodyD);
     ctx.fillStyle=tdG;
-    ctx.beginPath();ctx.moveTo(0,0);ctx.bezierCurveTo(-8,4,-16,10,-14,18);ctx.bezierCurveTo(-8,12,-2,6,0,0);ctx.closePath();ctx.fill();
+    ctx.beginPath();ctx.moveTo(0,0);
+    ctx.bezierCurveTo(-8,2,-18,6,-16,14);
+    ctx.bezierCurveTo(-10,8,-3,4,0,0);
+    ctx.closePath();ctx.fill();
     ctx.restore();
 
-    // Head (low forward position)
-    const headX=x+DUCK_W-34;
-    const hg2=ctx.createLinearGradient(headX,y-4,headX+32,y+18);
+    // ── Neck (folded forward) ──
+    const neckBaseX=x+DUCK_W-18;
+    const neckBaseY=bodyTop+6;
+    const neckTipX =x+DUCK_W-10;
+    const neckTipY =bodyTop-2;    // neck tip slightly above body top
+    const neckG=ctx.createLinearGradient(neckBaseX,neckBaseY,neckTipX,neckTipY);
+    neckG.addColorStop(0,C.body);neckG.addColorStop(0.5,C.bodyL);neckG.addColorStop(1,C.body);
+    ctx.fillStyle=neckG;
+    ctx.beginPath();
+    ctx.moveTo(neckBaseX-5,neckBaseY);
+    ctx.bezierCurveTo(neckBaseX-4,neckBaseY-6,neckTipX-8,neckTipY+8,neckTipX-5,neckTipY+4);
+    ctx.bezierCurveTo(neckTipX+2,neckTipY,neckTipX+6,neckTipY+4,neckTipX+8,neckTipY+8);
+    ctx.bezierCurveTo(neckBaseX+6,neckBaseY-4,neckBaseX+5,neckBaseY+2,neckBaseX+3,neckBaseY);
+    ctx.closePath();ctx.fill();
+
+    // ── Head (low, forward) ──
+    const headX=x+DUCK_W-28;
+    const headY=bodyTop-2;   // head sits just above body top, within DUCK_H band
+    const hg2=ctx.createLinearGradient(headX,headY-2,headX+30,headY+18);
     hg2.addColorStop(0,C.bodyL);hg2.addColorStop(0.55,C.body);hg2.addColorStop(1,C.bodyD);
     ctx.fillStyle=hg2;
     ctx.beginPath();
-    ctx.moveTo(headX+4,y+2);
-    ctx.bezierCurveTo(headX+2,y-4,headX+10,y-6,headX+18,y-4);
-    ctx.bezierCurveTo(headX+26,y-2,headX+30,y+4,headX+30,y+10);
-    ctx.bezierCurveTo(headX+30,y+16,headX+24,y+19,headX+16,y+19);
-    ctx.bezierCurveTo(headX+8,y+18,headX+2,y+12,headX+4,y+2);
+    ctx.moveTo(headX+4,headY+2);
+    ctx.bezierCurveTo(headX+2,headY-2,headX+10,headY-4,headX+18,headY-2);
+    ctx.bezierCurveTo(headX+25,headY,headX+28,headY+5,headX+28,headY+10);
+    ctx.bezierCurveTo(headX+28,headY+16,headX+22,headY+19,headX+14,headY+18);
+    ctx.bezierCurveTo(headX+6,headY+17,headX+2,headY+11,headX+4,headY+2);
     ctx.closePath();ctx.fill();
-    // Duck head snout
+
+    // Snout
     ctx.fillStyle=C.body;
     ctx.beginPath();
-    ctx.moveTo(headX+22,y+2);ctx.bezierCurveTo(headX+28,y,headX+36,y+4,headX+36,y+9);
-    ctx.bezierCurveTo(headX+36,y+13,headX+30,y+15,headX+24,y+14);ctx.bezierCurveTo(headX+20,y+13,headX+20,y+8,headX+22,y+2);
+    ctx.moveTo(headX+20,headY+2);
+    ctx.bezierCurveTo(headX+26,headY,headX+34,headY+4,headX+34,headY+9);
+    ctx.bezierCurveTo(headX+34,headY+13,headX+28,headY+15,headX+22,headY+14);
+    ctx.bezierCurveTo(headX+18,headY+12,headX+18,headY+8,headX+20,headY+2);
     ctx.closePath();ctx.fill();
-    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.ellipse(headX+33,y+6,1.8,1.2,0.3,0,Math.PI*2);ctx.fill();
-    // Duck mouth
+    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.ellipse(headX+31,headY+6,1.8,1.2,0.3,0,Math.PI*2);ctx.fill();
     ctx.strokeStyle=C.bodyD;ctx.lineWidth=1.2;
-    ctx.beginPath();ctx.moveTo(headX+24,y+13);ctx.quadraticCurveTo(headX+30,y+14,headX+35,y+11);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(headX+22,headY+13);ctx.quadraticCurveTo(headX+28,headY+14,headX+33,headY+11);ctx.stroke();
 
     // Eye
-    ctx.fillStyle=C.eye;ctx.beginPath();ctx.arc(headX+11,y+7,7,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=C.eye;ctx.beginPath();ctx.arc(headX+11,headY+7,7,0,Math.PI*2);ctx.fill();
     if(this.eyeOpen){
-      const ig=ctx.createRadialGradient(headX+10,y+6,0,headX+11,y+7,5.5);
+      const ig=ctx.createRadialGradient(headX+10,headY+6,0,headX+11,headY+7,5.5);
       ig.addColorStop(0,'rgba(160,255,120,0.9)');ig.addColorStop(0.3,C.iris);ig.addColorStop(1,'rgba(0,25,8,1)');
-      ctx.fillStyle=ig;ctx.beginPath();ctx.arc(headX+11,y+7,5.5,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='#000605';ctx.beginPath();ctx.ellipse(headX+11.5,y+7,2.5,3,-0.1,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='rgba(255,255,255,0.94)';ctx.beginPath();ctx.arc(headX+13,y+5,1.6,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle=ig;ctx.beginPath();ctx.arc(headX+11,headY+7,5.5,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#000605';ctx.beginPath();ctx.ellipse(headX+11.5,headY+7,2.5,3,-0.1,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.94)';ctx.beginPath();ctx.arc(headX+13,headY+5,1.6,0,Math.PI*2);ctx.fill();
+    } else {
+      ctx.strokeStyle=C.bodyD;ctx.lineWidth=1.8;
+      ctx.beginPath();ctx.moveTo(headX+4,headY+7);ctx.quadraticCurveTo(headX+11,headY+12,headX+18,headY+7);ctx.stroke();
     }
 
-    // Duck legs (crouched bent position)
-    const dHip=y+DUCK_H-2;
-    this._drawLegArticulated(x+18,dHip,(t+0.5)%1,C,true);
-    this._drawLegArticulated(x+30,dHip,t,C,false);
+    // ── Legs — hip originates at bodyBot, feet reach exactly footY ──
+    // legHipY is bodyBot; legs are sized so foot bottom = footY
+    const legHipY = bodyBot;
+    this._drawDuckLeg(x+22,legHipY,footY,(t+0.5)%1,C,true);
+    this._drawDuckLeg(x+34,legHipY,footY,t,C,false);
+  }
+
+  // ── DUCK LEG — hip at hipY, foot-bottom at exactly footY ─────
+  _drawDuckLeg(hipX,hipY,footY,phase,C,isBack){
+    const ctx=this.ctx;
+    const totalH=footY-hipY;            // exact vertical drop available
+    const thighL=Math.round(totalH*0.50);
+    const shinL =totalH-thighL;         // remainder so chain = totalH exactly
+    const footL =10;
+    const p=phase*Math.PI*2;
+    const thighAng=Math.sin(p)*16*(isBack?0.7:1);
+    const ankleAng=-thighAng*0.3+6;
+
+    ctx.save();
+    if(isBack) ctx.globalAlpha=0.55;
+    ctx.translate(hipX,hipY);
+
+    // Thigh
+    ctx.save();ctx.rotate(thighAng*Math.PI/180);
+    const tg=ctx.createLinearGradient(0,0,0,thighL);
+    tg.addColorStop(0,isBack?C.bodyD:C.bodyL);tg.addColorStop(1,C.body);
+    ctx.fillStyle=tg;
+    ctx.beginPath();ctx.moveTo(-4,0);ctx.bezierCurveTo(-4,thighL*0.5,-3,thighL,0,thighL);
+    ctx.bezierCurveTo(3,thighL,4,thighL*0.5,4,0);ctx.closePath();ctx.fill();
+    // Knee
+    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.arc(0,thighL,3.5,0,Math.PI*2);ctx.fill();
+    ctx.translate(0,thighL);
+
+    // Shin (no extra rotation — stays vertical so foot lands at correct Y)
+    const sg2=ctx.createLinearGradient(0,0,0,shinL);
+    sg2.addColorStop(0,C.body);sg2.addColorStop(1,C.bodyD);
+    ctx.fillStyle=sg2;
+    ctx.beginPath();ctx.moveTo(-3.5,0);ctx.bezierCurveTo(-3.5,shinL*0.5,-2.5,shinL,0,shinL);
+    ctx.bezierCurveTo(2.5,shinL,3.5,shinL*0.5,3.5,0);ctx.closePath();ctx.fill();
+    // Ankle
+    ctx.fillStyle=C.bodyD;ctx.beginPath();ctx.arc(0,shinL,3,0,Math.PI*2);ctx.fill();
+    ctx.translate(0,shinL);
+
+    // Foot — at exactly footY now
+    ctx.save();ctx.rotate(ankleAng*Math.PI/180);
+    const fg=ctx.createLinearGradient(0,0,footL+4,4);
+    fg.addColorStop(0,C.body);fg.addColorStop(1,C.bodyD);
+    ctx.fillStyle=fg;
+    ctx.beginPath();ctx.moveTo(-2,-1);
+    ctx.bezierCurveTo(2,-3,footL+2,-2,footL+4,1);
+    ctx.bezierCurveTo(footL+5,4,footL+3,7,footL,7);
+    ctx.bezierCurveTo(footL-2,7,2,5,-2,3);
+    ctx.bezierCurveTo(-3,2,-3,1,-2,-1);
+    ctx.closePath();ctx.fill();
+    // Claws
+    ctx.fillStyle=C.claw;
+    [2,footL*0.45,footL*0.85].forEach(tx=>{
+      ctx.beginPath();ctx.moveTo(tx,5);ctx.lineTo(tx-2,11);ctx.lineTo(tx+3,9);ctx.closePath();ctx.fill();
+    });
+    ctx.restore();ctx.restore();ctx.restore();ctx.restore();
   }
 }
 
@@ -2334,7 +2441,7 @@ class Cactus {
   }
 
   update(dt,speed){this.x-=speed*dt;if(this.x+this.width<-80)this.dead=true}
-  get hitbox(){return{x:this.x+5,y:this.y+4,w:this.width-10,h:this.height-4}}
+  get hitbox(){return{x:this.x+6,y:this.y+2,w:this.width-12,h:this.height-2}}
 
   draw(){
     const ctx=this.ctx, n=this.isNight;
