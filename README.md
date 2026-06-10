@@ -150,7 +150,7 @@ Works in all modern browsers that support the Canvas API and Web Audio API:
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/dinorun.git
+git clone https://github.com/mohitkhyalia1/Dino-game.git
 
 # Open the game
 open index.html   # macOS
