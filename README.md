@@ -11,7 +11,7 @@ A feature-rich, browser-based endless runner game built entirely in a single HTM
 
 ## 🎮 Play It
 
-Just open **`DinoRun_v3.html`** in any modern browser — that's it.
+Just open **`index.html`** in any modern browser — that's it.
 
 > No server needed. No install. No build step. Double-click and run.
 
@@ -105,7 +105,7 @@ Speed ramps from **340 px/s** at start up to **1150 px/s** at the cap, with a vi
 
 ```
 dinorun/
-├── DinoRun_v3.html   # The entire game — HTML, CSS, and JS in one file
+├── index.html   # The entire game — HTML, CSS, and JS in one file
 └── README.md
 ```
 
@@ -153,9 +153,9 @@ Works in all modern browsers that support the Canvas API and Web Audio API:
 git clone https://github.com/your-username/dinorun.git
 
 # Open the game
-open DinoRun_v3.html   # macOS
-start DinoRun_v3.html  # Windows
-xdg-open DinoRun_v3.html  # Linux
+open index.html   # macOS
+start index.html  # Windows
+xdg-open index.html  # Linux
 ```
 
 Or just drag the file into your browser.
