@@ -951,28 +951,97 @@ class Background {
     return pts;
   }
 
+  // Generate N angularly-spaced points with randomized radius multipliers
+  // and slight angle jitter — the "fingerprint" of one organic cloud lobe.
+  _genBlobPts(n,rMin,rMax){
+    const out=[];
+    const step=Math.PI*2/n;
+    for(let i=0;i<n;i++){
+      out.push({
+        a:i*step+(Math.random()-0.5)*step*0.7,
+        r:rMin+Math.random()*(rMax-rMin)
+      });
+    }
+    return out;
+  }
+
+  // Build a smooth closed organic blob path from precomputed angle/radius
+  // points — replaces ellipse() with a hand-drawn-looking lobed silhouette.
+  _blobPath(ctx,cx,cy,rx,ry,pts,rot){
+    rot=rot||0;
+    const n=pts.length;
+    const xy=pts.map(({a,r})=>{
+      const ang=a+rot;
+      return {x:cx+Math.cos(ang)*rx*r, y:cy+Math.sin(ang)*ry*r};
+    });
+    ctx.beginPath();
+    const last=xy[n-1], first=xy[0];
+    ctx.moveTo((last.x+first.x)/2,(last.y+first.y)/2);
+    for(let i=0;i<n;i++){
+      const cur=xy[i], next=xy[(i+1)%n];
+      ctx.quadraticCurveTo(cur.x,cur.y,(cur.x+next.x)/2,(cur.y+next.y)/2);
+    }
+    ctx.closePath();
+  }
+
   _genVolumeClouds(n){
     return Array.from({length:n},()=>{
-      // Each cloud has a set of spherical puffs
-      const puffCount=3+Math.floor(Math.random()*5);
-      const w=90+Math.random()*180;
-      const h=28+Math.random()*45;
+      const w=85+Math.random()*200;
+      const h=32+Math.random()*56;
       const puffs=[];
-      for(let i=0;i<puffCount;i++){
+
+      // LAYER 0 — bottom row: flat, wide, spread out (darker base)
+      const btmCount=3+Math.floor(Math.random()*3);
+      for(let i=0;i<btmCount;i++){
+        const t=i/(btmCount-1||1);
         puffs.push({
-          ox:(i/(puffCount-1||1))*w*(0.8+Math.random()*0.4)-w*0.1,
-          oy:(Math.random()-0.5)*h*0.5,
-          rx:w*0.12+Math.random()*w*0.15,
-          ry:h*(0.3+Math.random()*0.4),
-          alpha:0.65+Math.random()*0.35
+          ox:t*w*0.84+w*0.08,
+          oy:h*(0.28+Math.random()*0.20),
+          rx:w*(0.13+Math.random()*0.12),
+          ry:h*(0.24+Math.random()*0.16),
+          layer:0,
+          rot:Math.random()*Math.PI*2,
+          pts:this._genBlobPts(7,0.86,1.14)
         });
       }
-      return {
-        x:Math.random()*W*2.8, y:12+Math.random()*105,
-        w, h, puffs,
+
+      // LAYER 1 — middle row: rounder, brighter, slightly overlapping
+      const midCount=2+Math.floor(Math.random()*3);
+      for(let i=0;i<midCount;i++){
+        const t=(i+0.5)/midCount;
+        puffs.push({
+          ox:t*w*0.72+w*0.14,
+          oy:h*(0.00+Math.random()*0.22),
+          rx:w*(0.15+Math.random()*0.13),
+          ry:h*(0.30+Math.random()*0.20),
+          layer:1,
+          rot:Math.random()*Math.PI*2,
+          pts:this._genBlobPts(8,0.76,1.26)
+        });
+      }
+
+      // LAYER 2 — top peaks: tall cauliflower domes, fully lit
+      const topCount=1+Math.floor(Math.random()*2);
+      for(let i=0;i<topCount;i++){
+        const t=(i+0.5)/topCount;
+        puffs.push({
+          ox:t*w*0.52+w*0.24+Math.random()*w*0.08,
+          oy:-h*(0.10+Math.random()*0.26),
+          rx:w*(0.15+Math.random()*0.11),
+          ry:h*(0.34+Math.random()*0.22),
+          layer:2,
+          rot:Math.random()*Math.PI*2,
+          pts:this._genBlobPts(9,0.68,1.32)
+        });
+      }
+
+      return{
+        x:Math.random()*W*2.8,
+        y:14+Math.random()*95,
+        w,h,puffs,
         speed:0.18+Math.random()*0.45,
         layer:Math.random()<0.38?0:1,
-        opacity:0.5+Math.random()*0.45
+        opacity:0.52+Math.random()*0.44
       };
     });
   }
@@ -1246,45 +1315,96 @@ class Background {
     ctx.save();
     ctx.globalAlpha=alpha;
 
-    // Determine sun/light direction for edge lighting
-    const sunDir=sunX<bx+bw/2?-1:1; // 1=sun from right, -1=from left
+    // Light direction: which side the sun/moon sits relative to this cloud
+    const sunDir=sunX<bx+bw/2?-1:1;
+    const [sr,sg,sb]=hexToRgb(sky.sun||'#ffe080');
 
-    // Shadow base (soft flat shadow under cloud)
-    ctx.fillStyle=night?'rgba(40,50,100,0.22)':'rgba(160,170,190,0.25)';
+    // ── Cast shadow on the ground below ──
+    ctx.fillStyle=night?'rgba(28,38,90,0.16)':'rgba(150,160,188,0.20)';
     ctx.beginPath();
-    ctx.ellipse(bx+bw*0.5,by+bh+7,bw*0.44,bh*0.18,0,0,Math.PI*2);
+    ctx.ellipse(bx+bw*0.5,by+bh+8,bw*0.42,bh*0.16,0,0,Math.PI*2);
     ctx.fill();
 
-    for(const p of puffs){
-      const px=bx+p.ox, py=by+p.oy;
+    // Sort puffs into shading bands
+    const L0=[],L1=[],L2=[];
+    for(const p of puffs){(p.layer===2?L2:p.layer===1?L1:L0).push(p);}
 
-      // Inner dark base (shadow interior of puff)
-      const shadowG=ctx.createRadialGradient(px+p.rx*0.1,py+p.ry*0.45,p.rx*0.05,px,py,Math.max(p.rx,p.ry));
-      if(night){
-        shadowG.addColorStop(0,'rgba(195,210,250,0.75)');
-        shadowG.addColorStop(0.55,'rgba(130,155,220,0.55)');
-        shadowG.addColorStop(1,'rgba(70,90,170,0.08)');
-      } else {
-        shadowG.addColorStop(0,'rgba(255,255,255,0.96)');
-        shadowG.addColorStop(0.4,'rgba(245,248,255,0.85)');
-        shadowG.addColorStop(0.75,'rgba(215,222,240,0.55)');
-        shadowG.addColorStop(1,'rgba(190,200,225,0.08)');
-      }
-      ctx.fillStyle=shadowG;
-      ctx.beginPath();ctx.ellipse(px,py,p.rx,p.ry,0,0,Math.PI*2);ctx.fill();
-
-      // Lit edge on sun-facing side
-      if(!night){
-        ctx.globalAlpha=alpha*0.45;
-        const litEdgeX=px+sunDir*p.rx*0.7;
-        const litG=ctx.createRadialGradient(litEdgeX,py-p.ry*0.4,0,litEdgeX,py-p.ry*0.2,p.rx*0.65);
-        litG.addColorStop(0,'rgba(255,255,255,0.9)');
-        litG.addColorStop(1,'transparent');
-        ctx.fillStyle=litG;
-        ctx.beginPath();ctx.ellipse(litEdgeX,py-p.ry*0.3,p.rx*0.55,p.ry*0.45,0,0,Math.PI*2);ctx.fill();
-        ctx.globalAlpha=alpha;
-      }
+    // ── Tonal palette (4 bands: shadow→base→mid→bright, plus a rim glow) ──
+    let cFringe,cBase,cMid,cTop,cRim;
+    if(night){
+      cFringe=[46,56,98];
+      cBase  =[58,68,114];
+      cMid   =[102,116,164];
+      cTop   =[162,176,216];
+      cRim   =[214,226,250];
+    }else{
+      cFringe=[166,178,202];
+      cBase  =[182,192,212];
+      cMid   =[224,230,242];
+      cTop   =[252,253,255];
+      cRim   =[Math.min(255,sr+10),Math.min(255,sg+10),Math.min(255,sb+22)];
     }
+
+    // Pass 0 — soft outer fringe: slightly oversized, low-alpha halo
+    // gives the silhouette a fluffy (non-vector) edge
+    ctx.globalAlpha=alpha*0.40;
+    ctx.fillStyle=`rgb(${cFringe[0]},${cFringe[1]},${cFringe[2]})`;
+    for(const p of puffs){
+      this._blobPath(ctx,bx+p.ox,by+p.oy,p.rx*1.20,p.ry*1.28,p.pts,p.rot);
+      ctx.fill();
+    }
+    ctx.globalAlpha=alpha;
+
+    // Pass 1 — full silhouette in the base (shadow-side) tone
+    // each puff is a hand-drawn organic blob, not an oval
+    ctx.fillStyle=`rgb(${cBase[0]},${cBase[1]},${cBase[2]})`;
+    for(const p of puffs){
+      this._blobPath(ctx,bx+p.ox,by+p.oy,p.rx,p.ry,p.pts,p.rot);
+      ctx.fill();
+    }
+
+    // Pass 2 — mid-body mass (middle + top puffs), inset & lifted slightly
+    // leaves the lower/base-only puffs showing cBase as a grounded underside
+    ctx.fillStyle=`rgb(${cMid[0]},${cMid[1]},${cMid[2]})`;
+    for(const p of [...L1,...L2]){
+      const px=bx+p.ox, py=by+p.oy-p.ry*0.10;
+      this._blobPath(ctx,px,py,p.rx*0.90,p.ry*0.86,p.pts,p.rot);
+      ctx.fill();
+    }
+
+    // Pass 3 — bright cauliflower tops (top puffs only), inset further
+    // and pushed up + toward the light source
+    ctx.fillStyle=`rgb(${cTop[0]},${cTop[1]},${cTop[2]})`;
+    for(const p of L2){
+      const px=bx+p.ox+sunDir*p.rx*0.10, py=by+p.oy-p.ry*0.26;
+      this._blobPath(ctx,px,py,p.rx*0.68,p.ry*0.64,p.pts,p.rot);
+      ctx.fill();
+    }
+
+    // Pass 4 — sun/moon-facing glow accent, clipped to the bright-top
+    // lobe's own organic outline so it never reads as a circle/oval
+    for(const p of L2){
+      const maxR=Math.max(p.rx,p.ry);
+      const px=bx+p.ox+sunDir*p.rx*0.10, py=by+p.oy-p.ry*0.26; // same as Pass 3 lobe
+      const gx=bx+p.ox+sunDir*p.rx*0.32, gy=by+p.oy-p.ry*0.42;
+      ctx.save();
+      this._blobPath(ctx,px,py,p.rx*0.68,p.ry*0.64,p.pts,p.rot);
+      ctx.clip();
+      const glow=ctx.createRadialGradient(gx,gy,0,gx,gy,maxR*0.95);
+      glow.addColorStop(0,`rgba(${cRim[0]},${cRim[1]},${cRim[2]},${night?0.42:0.55})`);
+      glow.addColorStop(1,`rgba(${cRim[0]},${cRim[1]},${cRim[2]},0)`);
+      ctx.fillStyle=glow;
+      ctx.fillRect(px-maxR*2,py-maxR*2,maxR*4,maxR*4);
+      ctx.restore();
+    }
+
+    // Pass 5 — underside contact shadow on the flat-bottomed base puffs
+    ctx.fillStyle=night?'rgba(18,24,58,0.24)':'rgba(128,138,164,0.22)';
+    for(const p of L0){
+      this._blobPath(ctx,bx+p.ox,by+p.oy+p.ry*0.30,p.rx*0.82,p.ry*0.50,p.pts,p.rot);
+      ctx.fill();
+    }
+
     ctx.restore();
   }
 
@@ -1851,54 +1971,70 @@ class Dino {
     ctx.closePath();ctx.fill();
   }
 
-  // ── FOOT + CLAWS ───────────────────────────────────────────────
+  // ── FOOT + CLAWS (T-Rex three-toed) ────────────────────────────
   _foot(ax,ay,C,isBack){
     const ctx=this.ctx;
-    const fL=isBack?12:14, fH=4;
-    const fg=ctx.createLinearGradient(ax-1,ay-fH,ax+fL+4,ay+fH);
-    fg.addColorStop(0,C.body);fg.addColorStop(1,C.bodyD);
+    const fL=isBack?13:15, fH=5;
+    // Metatarsal / foot body
+    const fg=ctx.createLinearGradient(ax-1,ay-fH,ax+fL+5,ay+fH+1);
+    fg.addColorStop(0,C.body);fg.addColorStop(0.55,C.bodyD);fg.addColorStop(1,C.bodyD);
     ctx.fillStyle=fg;
     ctx.beginPath();
     ctx.moveTo(ax-2,ay-1);
-    ctx.bezierCurveTo(ax,ay-fH,ax+fL*0.4,ay-fH,ax+fL+2,ay-fH/2);
-    ctx.bezierCurveTo(ax+fL+5,ay,ax+fL+4,ay+fH,ax+fL+1,ay+fH+1);
-    ctx.bezierCurveTo(ax+fL*0.6,ay+fH+2,ax+1,ay+fH,ax-2,ay+fH/2);
+    ctx.bezierCurveTo(ax,ay-fH-1,ax+fL*0.38,ay-fH-1,ax+fL+2,ay-fH*0.4);
+    ctx.bezierCurveTo(ax+fL+6,ay+1,ax+fL+5,ay+fH+1,ax+fL+2,ay+fH+2);
+    ctx.bezierCurveTo(ax+fL*0.55,ay+fH+3,ax+1,ay+fH+1,ax-2,ay+fH*0.4);
     ctx.closePath();ctx.fill();
-    // ankle scale
+    // Ankle joint highlight
     const ba=ctx.globalAlpha;
-    ctx.fillStyle=C.bodyL;ctx.globalAlpha=ba*(isBack?0.18:0.30);
-    ctx.beginPath();ctx.ellipse(ax+3,ay,3.5,2,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=C.bodyL;ctx.globalAlpha=ba*(isBack?0.16:0.28);
+    ctx.beginPath();ctx.ellipse(ax+4,ay-1,4,2.4,0,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=ba;
-    // claws
+    // Three large prominent claws (T-Rex hallmark)
     ctx.fillStyle=C.claw;
-    [1.5,fL*0.42,fL*0.80].forEach(tx=>{
+    [[1.2,8.5,5.5],[fL*0.38,8,5],[fL*0.76,7,4.2]].forEach(([tx,cw,ch])=>{
       ctx.beginPath();
       ctx.moveTo(ax+tx,ay+fH);
-      ctx.bezierCurveTo(ax+tx+1,ay+fH+3,ax+tx+4,ay+fH+6,ax+tx+6,ay+fH+4);
-      ctx.bezierCurveTo(ax+tx+5,ay+fH+2,ax+tx+2,ay+fH,ax+tx,ay+fH);
+      ctx.bezierCurveTo(ax+tx+0.5,ay+fH+2,ax+tx+cw*0.5,ay+fH+ch+1,ax+tx+cw,ay+fH+ch-1);
+      ctx.bezierCurveTo(ax+tx+cw-0.5,ay+fH+ch-3.5,ax+tx+cw*0.3,ay+fH+ch*0.4,ax+tx,ay+fH);
       ctx.closePath();ctx.fill();
+      // Claw highlight
+      ctx.fillStyle='rgba(255,255,255,0.12)';
+      ctx.beginPath();ctx.moveTo(ax+tx+0.5,ay+fH);ctx.lineTo(ax+tx+cw*0.4,ay+fH+ch*0.55);ctx.lineTo(ax+tx+1,ay+fH);ctx.closePath();ctx.fill();
+      ctx.fillStyle=C.claw;
     });
   }
 
-  // ── FULL IK LEG ────────────────────────────────────────────────
+  // ── FULL IK LEG (T-Rex massive thighs) ────────────────────────
   _legIK(hipX,hipY,kneeX,kneeY,footX,footY,C,isBack){
     const ctx=this.ctx;
     ctx.save();
-    if(isBack) ctx.globalAlpha=0.60;
-    const tw0=isBack?8:11,tw1=isBack?6:8.5;
-    const sw0=isBack?6:8.5,sw1=isBack?4:5.5;
-    // thigh
+    if(isBack) ctx.globalAlpha=0.58;
+    // T-Rex had enormous thighs — primary power muscles
+    const tw0=isBack?11:15,tw1=isBack?8:11;
+    const sw0=isBack?6.5:8.5,sw1=isBack?4:5.5;
+    // Thigh — very thick, rounded muscle belly
     this._bone(hipX,hipY,kneeX,kneeY,tw0,tw1,isBack?C.bodyD:C.bodyL,C.body,C.bodyD);
-    // knee joint
-    const kg=ctx.createRadialGradient(kneeX,kneeY,0,kneeX,kneeY,isBack?4:5.5);
-    kg.addColorStop(0,isBack?C.body:C.bodyL);kg.addColorStop(1,C.bodyD);
+    // Thigh muscle highlight (subtle)
+    if(!isBack){
+      const mx=(hipX+kneeX)*0.5, my=(hipY+kneeY)*0.5;
+      const mg=ctx.createRadialGradient(mx-3,my-3,0,mx,my,tw0*0.9);
+      mg.addColorStop(0,C.bodyL+'88');mg.addColorStop(1,'transparent');
+      ctx.fillStyle=mg;
+      ctx.beginPath();ctx.ellipse(mx-2,my,tw0*0.7,tw0*0.6,-0.4,0,Math.PI*2);ctx.fill();
+    }
+    // Knee — pronounced, angular knob
+    const kg=ctx.createRadialGradient(kneeX-1,kneeY-1,0,kneeX,kneeY,isBack?5:6.5);
+    kg.addColorStop(0,isBack?C.body:C.bodyL);kg.addColorStop(0.5,C.body);kg.addColorStop(1,C.bodyD);
     ctx.fillStyle=kg;
-    ctx.beginPath();ctx.arc(kneeX,kneeY,isBack?3.8:5.2,0,Math.PI*2);ctx.fill();
-    // shin
+    ctx.beginPath();ctx.ellipse(kneeX,kneeY,isBack?4.5:6,isBack?3.8:5,-0.3,0,Math.PI*2);ctx.fill();
+    // Shin
     this._bone(kneeX,kneeY,footX,footY,sw0,sw1,isBack?C.bodyD:C.body,C.bodyD,C.bodyD);
-    // ankle
-    ctx.fillStyle=C.bodyD;
-    ctx.beginPath();ctx.arc(footX,footY,isBack?3:4,0,Math.PI*2);ctx.fill();
+    // Ankle joint
+    const ag=ctx.createRadialGradient(footX,footY,0,footX,footY,isBack?3.5:4.5);
+    ag.addColorStop(0,C.bodyD);ag.addColorStop(1,C.bodyD+'cc');
+    ctx.fillStyle=ag;
+    ctx.beginPath();ctx.arc(footX,footY,isBack?3.2:4.2,0,Math.PI*2);ctx.fill();
     // foot
     this._foot(footX,footY,C,isBack);
     ctx.restore();
@@ -1988,18 +2124,18 @@ class Dino {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  RUNNING POSE
+  //  RUNNING POSE — T-Rex redesign
   // ═══════════════════════════════════════════════════════════════
   _drawRun(C){
     const ctx=this.ctx;
     const x=this.x, t=this.cycle;
     const air=!this.onGround;
 
-    // Body pivot
+    // Body pivot (hip joint)
     const hipX=x+31;
     const hipY=this.y+DINO_H-26+this.bob;
 
-    // ── TAIL (behind body) ──
+    // ── TAIL (behind body, squash-stretched) ──
     ctx.save();
     ctx.translate(hipX,hipY);ctx.scale(this.stX,this.sqY);ctx.translate(-hipX,-hipY);
     this._drawTail(x,hipY,C);
@@ -2016,14 +2152,20 @@ class Dino {
     // ── BODY / NECK / HEAD (squash-stretched) ──
     ctx.save();
     ctx.translate(hipX,hipY);ctx.scale(this.stX,this.sqY);ctx.translate(-hipX,-hipY);
+
     this._drawTorso(x,this.y,C);
-    // back forearm
-    this._drawForearm(x+41,hipY-26,Math.sin(((t+0.5)%1)*Math.PI*2)*26,C,true);
-    // head
-    const nod=air?(this.vy<0?-15:9):Math.sin(t*Math.PI*4)*2.5-this.bob*0.5;
+
+    // T-Rex back arm (vestigial — tiny, tucked to chest)
+    const armX=x+34, armY=hipY-28;
+    this._drawForearm(armX,armY,Math.sin(((t+0.5)%1)*Math.PI*2)*14,C,true);
+
+    // Nod: head pitch — more expressive T-Rex motion
+    const nod=air?(this.vy<0?-18:11):Math.sin(t*Math.PI*4)*3.5-this.bob*0.6;
     this._drawNeckHead(x,this.y,nod,C);
-    // front forearm
-    this._drawForearm(x+41,hipY-26,Math.sin(t*Math.PI*2)*26,C,false);
+
+    // T-Rex front arm (vestigial — tiny, tucked to chest)
+    this._drawForearm(armX,armY,Math.sin(t*Math.PI*2)*14,C,false);
+
     ctx.restore();
 
     // ── FRONT LEG (IK, on top) ──
@@ -2035,203 +2177,342 @@ class Dino {
     }
   }
 
-  // ── TAIL (physics-driven) ──────────────────────────────────────
+  // ── TAIL (T-Rex — long, thick at root, physics-driven) ────────
   _drawTail(x,hipY,C){
     const ctx=this.ctx;
-    const bx=x+8, by=hipY-2;
-    const b0x=bx,    b0y=by;
-    const b1x=bx-14, b1y=by+this._tailBase*0.28+3;
-    const b2x=bx-28, b2y=by+this._tailMid *0.38+6;
-    const b3x=bx-44, b3y=by+this._tailTip *0.48+9;
-    // Draw tail as tapered bezier ribbon
-    const drawSeg=(ax,ay,bx_,by_,w0,w1,c0,c1)=>{
-      this._bone(ax,ay,bx_,by_,w0,w1,c0,c1,C.bodyD);
-    };
-    drawSeg(b0x,b0y,b1x,b1y, 9, 7, C.body,C.bodyD);
-    drawSeg(b1x,b1y,b2x,b2y, 7, 4.5, C.bodyD,C.bodyD);
-    drawSeg(b2x,b2y,b3x,b3y, 4.5,2,  C.bodyD,C.bodyD);
-    // dorsal ridge spines on tail
+    // Root attaches to rump — thick as the body itself at the base
+    const b0x=x+10, b0y=hipY-6;
+    // 5 segments tapering to a point, S-curve counterbalance
+    const b1x=b0x-13, b1y=b0y+this._tailBase*0.22+1;
+    const b2x=b0x-26, b2y=b0y+this._tailMid*0.34+4;
+    const b3x=b0x-38, b3y=b0y+this._tailTip*0.44+7;
+    const b4x=b0x-50, b4y=b0y+this._tailTip*0.54+11;
+    const b5x=b0x-60, b5y=b0y+this._tailTip*0.60+14;
+
+    // Draw tail as thick tapered ribbon — root nearly body-diameter
+    // Segment 0→1: massive, trunk-like
+    this._bone(b0x,b0y,b1x,b1y,13,10.5,C.body,C.body,C.bodyD);
+    // Segment 1→2
+    this._bone(b1x,b1y,b2x,b2y,10.5,8,C.body,C.bodyD,C.bodyD);
+    // Segment 2→3
+    this._bone(b2x,b2y,b3x,b3y,8,5.5,C.bodyD,C.bodyD,C.bodyD);
+    // Segment 3→4
+    this._bone(b3x,b3y,b4x,b4y,5.5,3,C.bodyD,C.bodyD,C.bodyD);
+    // Segment 4→5: tapers to point
+    this._bone(b4x,b4y,b5x,b5y,3,0.8,C.bodyD,C.bodyD,C.bodyD);
+
+    // Dorsal ridge spines running the tail length (matches back ridge)
     ctx.fillStyle=C.scale;
-    [[b1x+1,b1y-7,5],[b2x+1,b2y-5,3.5]].forEach(([sx,sy,sz])=>{
+    [[b1x+1,b1y-10,7],[b2x+1,b2y-8,5.5],[b3x+1,b3y-6,4],[b4x+1,b4y-4,2.5]].forEach(([sx,sy,sz])=>{
       ctx.beginPath();
-      ctx.moveTo(sx-sz*0.5,sy+sz*0.5);
-      ctx.bezierCurveTo(sx-sz*0.2,sy-sz*0.8,sx+sz*0.2,sy-sz*0.8,sx+sz*0.5,sy+sz*0.5);
+      ctx.moveTo(sx-sz*0.45,sy+sz*0.55);
+      ctx.bezierCurveTo(sx-sz*0.15,sy-sz*1.05,sx+sz*0.15,sy-sz*1.05,sx+sz*0.45,sy+sz*0.55);
       ctx.closePath();ctx.fill();
     });
+
+    // Ventral tail highlight (lighter underside — T-Rex was counter-shaded)
+    ctx.fillStyle=C.belly;ctx.globalAlpha=0.22;
+    this._bone(b0x,b0y+4,b2x,b2y+5,6,3.5,C.belly,C.belly,'transparent');
+    ctx.globalAlpha=1;
   }
 
-  // ── TORSO ──────────────────────────────────────────────────────
+  // ── TORSO (T-Rex barrel chest, deep keel, powerful haunches) ──
   _drawTorso(x,y,C){
     const ctx=this.ctx;
     const breath=Math.sin(this.breathT*0.9)*1.4;
     const cx=x+32, cy=y+38;
 
-    // ── dorsal humps / back profile ──
-    const bodyG=ctx.createLinearGradient(x+4,y+18,x+54,y+68);
-    bodyG.addColorStop(0,C.bodyL);bodyG.addColorStop(0.38,C.body);
-    bodyG.addColorStop(0.72,C.bodyD);bodyG.addColorStop(1,C.bodyD);
+    // ── Main body — deep barrel-chested theropod silhouette ──
+    const bodyG=ctx.createLinearGradient(x+5,y+13,x+57,y+65);
+    bodyG.addColorStop(0,C.bodyL);bodyG.addColorStop(0.30,C.body);
+    bodyG.addColorStop(0.68,C.bodyD);bodyG.addColorStop(1,C.bodyD);
     ctx.fillStyle=bodyG;
     ctx.beginPath();
-    // top spine line (back of neck down to hip)
-    ctx.moveTo(x+34,y+18);
-    ctx.bezierCurveTo(x+44,y+20,x+52,y+28,x+54,y+42+breath*0.5);
-    // hip / rump
-    ctx.bezierCurveTo(x+54,y+54,x+46,y+60,x+34,y+62);
-    // belly line
-    ctx.bezierCurveTo(x+24,y+64,x+16,y+62,x+14,y+56);
-    // chest
-    ctx.bezierCurveTo(x+10,y+48,x+12,y+36+breath,x+20,y+28);
-    // back to neck base
-    ctx.bezierCurveTo(x+24,y+22,x+30,y+18,x+34,y+18);
+    // Start at neck base (upper-rear shoulder)
+    ctx.moveTo(x+30,y+19);
+    // Dorsal arch — T-Rex had a pronounced high shoulder/back
+    ctx.bezierCurveTo(x+40,y+12,x+51,y+15,x+55,y+28+breath*0.35);
+    // Powerful haunches / rump
+    ctx.bezierCurveTo(x+58,y+42,x+54,y+56,x+42,y+63);
+    // Ventral line — full round belly
+    ctx.bezierCurveTo(x+32,y+67,x+19,y+65,x+13,y+59);
+    // Deep chest wall — T-Rex thorax was very deep
+    ctx.bezierCurveTo(x+6,y+53,x+6,y+41+breath,x+10,y+33);
+    // Pectoral / shoulder region
+    ctx.bezierCurveTo(x+12,y+27,x+20,y+21,x+30,y+19);
     ctx.closePath();ctx.fill();
 
-    // ── belly highlight ──
-    const bellyG=ctx.createLinearGradient(cx,y+42,cx,y+64);
-    bellyG.addColorStop(0,C.belly);bellyG.addColorStop(1,'transparent');
-    ctx.fillStyle=bellyG;ctx.globalAlpha=0.38;
+    // ── Belly highlight — counter-shaded ventral surface ──
+    const belG=ctx.createLinearGradient(cx,y+46,cx,y+68);
+    belG.addColorStop(0,C.belly);belG.addColorStop(0.7,'transparent');
+    ctx.fillStyle=belG;ctx.globalAlpha=0.44;
     ctx.beginPath();
-    ctx.moveTo(x+18,y+48);
-    ctx.bezierCurveTo(x+16,y+56,x+24,y+62,x+34,y+62);
-    ctx.bezierCurveTo(x+44,y+62,x+50,y+56,x+52,y+50);
-    ctx.bezierCurveTo(x+38,y+58,x+22,y+58,x+18,y+48);
+    ctx.moveTo(x+15,y+52);
+    ctx.bezierCurveTo(x+10,y+60,x+22,y+66,x+36,y+66);
+    ctx.bezierCurveTo(x+50,y+65,x+56,y+58,x+55,y+50);
+    ctx.bezierCurveTo(x+44,y+62,x+22,y+62,x+15,y+52);
     ctx.fill();ctx.globalAlpha=1;
 
-    // ── dorsal spines ──
+    // ── Dorsal spine ridge (T-Rex signature) ──
     ctx.fillStyle=C.scale;
-    [[x+38,y+18,6],[x+43,y+22,5],[x+48,y+28,4.2],[x+51,y+35,3.5]].forEach(([sx,sy,sz])=>{
+    [[x+35,y+14,7.5],[x+40,y+11,6.8],[x+45,y+12,6.0],[x+49,y+16,5.2],[x+52,y+22,4.2],[x+54,y+30,3.0]].forEach(([sx,sy,sz])=>{
       ctx.beginPath();
-      ctx.moveTo(sx-sz*0.5,sy+sz*0.6);
-      ctx.bezierCurveTo(sx-sz*0.1,sy-sz,sx+sz*0.1,sy-sz,sx+sz*0.5,sy+sz*0.6);
+      ctx.moveTo(sx-sz*0.45,sy+sz*0.6);
+      ctx.bezierCurveTo(sx-sz*0.12,sy-sz*1.05,sx+sz*0.12,sy-sz*1.05,sx+sz*0.45,sy+sz*0.6);
       ctx.closePath();ctx.fill();
     });
 
-    // ── surface scales ──
-    ctx.fillStyle=C.scale;ctx.globalAlpha=0.22;
-    [[x+36,y+32,3.5],[x+44,y+38,3],[x+38,y+46,3.5],[x+28,y+44,3]].forEach(([sx,sy,sr])=>{
-      ctx.beginPath();ctx.ellipse(sx,sy,sr,sr*0.55,-0.3,0,Math.PI*2);ctx.fill();
+    // ── Shoulder muscle mass overlay ──
+    const sG=ctx.createRadialGradient(x+20,y+30,0,x+20,y+32,18);
+    sG.addColorStop(0,C.bodyL+'55');sG.addColorStop(1,'transparent');
+    ctx.fillStyle=sG;
+    ctx.beginPath();ctx.ellipse(x+21,y+31,12,10,-0.3,0,Math.PI*2);ctx.fill();
+
+    // ── Scale texture ──
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.20;
+    [[x+40,y+30,4],[x+47,y+37,3.4],[x+42,y+45,3.8],[x+32,y+47,3.2],[x+22,y+44,2.8],[x+16,y+40,2.4]].forEach(([sx,sy,sr])=>{
+      ctx.beginPath();ctx.ellipse(sx,sy,sr,sr*0.52,-0.3,0,Math.PI*2);ctx.fill();
+    });
+    ctx.globalAlpha=1;
+
+    // ── Subtle rib cage indication ──
+    ctx.strokeStyle=C.bodyD;ctx.lineWidth=0.75;ctx.globalAlpha=0.11;
+    [0,1,2,3].forEach(r=>{
+      const rbx=x+15+r*7;
+      ctx.beginPath();
+      ctx.moveTo(rbx,y+36);
+      ctx.bezierCurveTo(rbx-4,y+44,rbx-3,y+51,rbx+4,y+56);
+      ctx.stroke();
     });
     ctx.globalAlpha=1;
   }
 
-  // ── NECK + HEAD ────────────────────────────────────────────────
+  // ── NECK + HEAD (T-Rex skull redesign) ────────────────────────
   _drawNeckHead(x,y,nodDeg,C){
     const ctx=this.ctx;
     const nod=nodDeg*(Math.PI/180);
-    // Neck base
-    const nx0=x+30,ny0=y+22;
-    // Neck tip (head pivot) — offset by nod
-    const neckLen=22;
-    const nx1=nx0+Math.sin(nod)*neckLen+4;
+
+    // Neck base at upper shoulder
+    const nx0=x+29, ny0=y+25;
+    const neckLen=25;
+    // Neck tip — S-curve forward lean
+    const nx1=nx0+Math.sin(nod)*neckLen+5;
     const ny1=ny0-Math.cos(nod)*neckLen;
 
-    // Neck
-    this._bone(nx0,ny0,nx1,ny1,8,6,C.bodyL,C.body,C.bodyD);
+    // ── Thick muscular neck ──
+    this._bone(nx0,ny0,nx1,ny1,12,9,C.bodyL,C.body,C.bodyD);
 
+    // Throat / dewlap highlight on neck ventral surface
+    {
+      const nMx=(nx0+nx1)*0.5+4, nMy=(ny0+ny1)*0.5+3;
+      ctx.fillStyle=C.belly;ctx.globalAlpha=0.26;
+      ctx.beginPath();
+      ctx.moveTo(nx0+9,ny0+3);
+      ctx.bezierCurveTo(nMx+7,nMy+2,nx1+6,ny1+4,nx1+5,ny1+1);
+      ctx.bezierCurveTo(nx1+3,ny1+7,nMx+3,nMy+7,nx0+5,ny0+8);
+      ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+    }
+
+    // Neck dorsal scale ridge
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.50;
+    const nSteps=3;
+    for(let i=0;i<nSteps;i++){
+      const nt=(i+0.5)/nSteps;
+      const nsx=nx0+(nx1-nx0)*nt-2, nsy=ny0+(ny1-ny0)*nt;
+      ctx.beginPath();
+      ctx.moveTo(nsx-2.2,nsy+1.5);
+      ctx.bezierCurveTo(nsx-0.8,nsy-4.2,nsx+0.8,nsy-4.2,nsx+2.2,nsy+1.5);
+      ctx.closePath();ctx.fill();
+    }
+    ctx.globalAlpha=1;
+
+    // ── HEAD ──
     ctx.save();
     ctx.translate(nx1,ny1);
     ctx.rotate(nod);
 
-    // ── skull ──
-    const skG=ctx.createRadialGradient(-4,-16,2,-4,-16,18);
-    skG.addColorStop(0,C.bodyL);skG.addColorStop(0.55,C.body);skG.addColorStop(1,C.bodyD);
+    // ════ T-REX SKULL — full authentic silhouette ════
+
+    // Main skull + upper jaw (premaxilla/maxilla)
+    const skG=ctx.createLinearGradient(-13,-32,22,8);
+    skG.addColorStop(0,C.bodyL);skG.addColorStop(0.38,C.body);
+    skG.addColorStop(0.78,C.bodyD);skG.addColorStop(1,C.bodyD);
     ctx.fillStyle=skG;
     ctx.beginPath();
-    // back of skull
-    ctx.moveTo(-12,-10);
-    ctx.bezierCurveTo(-14,-18,-10,-26,-4,-28);
-    // top of skull → snout
-    ctx.bezierCurveTo(2,-30,10,-28,16,-22);
-    ctx.bezierCurveTo(20,-18,22,-12,22,-6);
-    // lower jaw
-    ctx.bezierCurveTo(22,-2,18,2,14,4);
-    ctx.bezierCurveTo(10,6,6,7,2,6);
-    // chin
-    ctx.bezierCurveTo(-2,5,-6,2,-8,-2);
-    // throat / back
-    ctx.bezierCurveTo(-10,-4,-12,-6,-12,-10);
+    ctx.moveTo(-12,-8);             // occipital — neck/skull junction
+    ctx.bezierCurveTo(-15,-20,-11,-30,-4,-32);  // posterior cranium dome
+    ctx.bezierCurveTo(0,-34,8,-32,14,-27);       // skull crown — wide temporal region
+    ctx.bezierCurveTo(18,-24,22,-18,25,-12);      // nasal bones (distinctive ridge)
+    ctx.bezierCurveTo(27,-7,26,-1,24,1);          // premaxilla tip (snout end)
+    ctx.bezierCurveTo(22,3,18,3.5,13,2.5);        // upper jaw edge
+    ctx.bezierCurveTo(7,1.5,1,0,-4,-2);           // dentary junction
+    ctx.bezierCurveTo(-8,-4,-11,-6,-12,-8);        // back to occipital
     ctx.closePath();ctx.fill();
 
-    // ── jaw underside ──
-    ctx.fillStyle=C.belly;ctx.globalAlpha=0.45;
+    // Lower jaw (mandible / dentary) — slightly open
+    const jawG=ctx.createLinearGradient(-9,0,22,10);
+    jawG.addColorStop(0,C.body);jawG.addColorStop(0.5,C.bodyD);jawG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=jawG;
     ctx.beginPath();
-    ctx.moveTo(-2,-4);
-    ctx.bezierCurveTo(2,-2,10,-1,14,4);
-    ctx.bezierCurveTo(8,7,0,7,-4,4);
-    ctx.bezierCurveTo(-6,2,-4,-2,-2,-4);
+    ctx.moveTo(-9,-1);              // jaw hinge (quadrate/quadratojugal)
+    ctx.bezierCurveTo(-3,3,5,5.5,12,5.5);    // lower jaw base
+    ctx.bezierCurveTo(18,5,23,2,24,-2);       // jaw tip
+    ctx.bezierCurveTo(22,-0.5,20,4.5,16,7);  // outer jaw surface
+    ctx.bezierCurveTo(9,9.5,1,9,-4,6);       // chin
+    ctx.bezierCurveTo(-7.5,3.5,-10,1,-9,-1); // back to hinge
+    ctx.closePath();ctx.fill();
+
+    // Jaw ventral highlight (lighter chin/throat)
+    ctx.fillStyle=C.belly;ctx.globalAlpha=0.40;
+    ctx.beginPath();
+    ctx.moveTo(-5,4);
+    ctx.bezierCurveTo(1,7.5,10,8,17,6);
+    ctx.bezierCurveTo(12,9.5,3,10,-3,7);
     ctx.closePath();ctx.fill();ctx.globalAlpha=1;
 
-    // ── nostril ──
-    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.7;
-    ctx.beginPath();ctx.ellipse(16,-18,2.2,1.5,0.4,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=1;
-
-    // ── eye socket ──
-    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.55;
-    ctx.beginPath();ctx.ellipse(-1,-20,5.5,4.5,-0.1,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=1;
-
-    // ── eye ──
-    if(this.eyeOpen){
-      const eG=ctx.createRadialGradient(-1+this.eyeX,-20,0,-1+this.eyeX,-20,4.2);
-      eG.addColorStop(0,C.iris);eG.addColorStop(0.42,C.eye);eG.addColorStop(1,C.eye);
-      ctx.fillStyle=eG;
-      ctx.beginPath();ctx.ellipse(-1+this.eyeX,-20,4,3.5,0,0,Math.PI*2);ctx.fill();
-      // pupil slit
-      ctx.fillStyle='rgba(0,0,0,0.85)';
-      ctx.beginPath();ctx.ellipse(-1+this.eyeX,-20,1.3,2.8,0,0,Math.PI*2);ctx.fill();
-      // specular
-      ctx.fillStyle='rgba(255,255,255,0.55)';
-      ctx.beginPath();ctx.ellipse(-0.2+this.eyeX,-21.4,1.2,0.9,-0.4,0,Math.PI*2);ctx.fill();
-    } else {
-      // blink — closed lid
-      ctx.fillStyle=C.body;ctx.globalAlpha=0.9;
+    // ── TEETH — serrated carnivore dentition ──
+    // Upper teeth (maxillary/premaxillary, hanging downward)
+    ctx.fillStyle='rgba(228,224,198,0.94)';
+    [[2.5,1.5,5.5,2.0],[6.5,1.5,5.0,1.9],[10.5,1.8,4.4,1.8],[14.5,1.4,3.8,1.7]].forEach(([tx,ty,th,tw])=>{
       ctx.beginPath();
-      ctx.moveTo(-5,-20);ctx.bezierCurveTo(-3,-17,1,-17,3,-20);
-      ctx.bezierCurveTo(1,-23,-3,-23,-5,-20);
+      ctx.moveTo(tx-tw,ty);
+      ctx.lineTo(tx,ty+th);
+      ctx.lineTo(tx+tw,ty);
+      ctx.bezierCurveTo(tx+tw-0.5,ty+0.5,tx-tw+0.5,ty+0.5,tx-tw,ty);
+      ctx.closePath();ctx.fill();
+      // Tooth highlight
+      ctx.fillStyle='rgba(255,255,245,0.30)';
+      ctx.beginPath();ctx.moveTo(tx-0.6,ty+0.5);ctx.lineTo(tx,ty+th*0.55);ctx.lineTo(tx+0.4,ty+0.5);ctx.closePath();ctx.fill();
+      ctx.fillStyle='rgba(228,224,198,0.94)';
+    });
+    // Lower teeth (dentary, pointing upward)
+    ctx.fillStyle='rgba(218,214,188,0.90)';
+    [[5,5,4.0,1.8],[9,5.5,3.5,1.7],[13,5,2.8,1.6]].forEach(([tx,ty,th,tw])=>{
+      ctx.beginPath();
+      ctx.moveTo(tx-tw,ty+0.5);
+      ctx.lineTo(tx,ty-th);
+      ctx.lineTo(tx+tw,ty+0.5);
+      ctx.closePath();ctx.fill();
+    });
+
+    // ── NASAL bones — prominent T-Rex feature ──
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.38;
+    ctx.beginPath();
+    ctx.moveTo(4,-32);
+    ctx.bezierCurveTo(10,-30,15,-26,19,-21);
+    ctx.bezierCurveTo(17,-22,12,-27,6,-30);
+    ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+
+    // Nasal ridge line
+    ctx.strokeStyle=C.bodyD;ctx.lineWidth=1.1;ctx.globalAlpha=0.30;
+    ctx.beginPath();ctx.moveTo(4,-31);ctx.bezierCurveTo(10,-28,16,-24,20,-19);ctx.stroke();
+    ctx.globalAlpha=1;
+
+    // Nostril opening (near snout tip)
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.82;
+    ctx.beginPath();ctx.ellipse(18,-19,2.8,1.9,0.45,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+
+    // ── SUPRAORBITAL RIDGE — brow overhang ──
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.45;
+    ctx.beginPath();
+    ctx.moveTo(-7,-27);
+    ctx.bezierCurveTo(-4,-24,1,-23,5,-25);
+    ctx.bezierCurveTo(3,-28,-3,-29,-7,-27);
+    ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+
+    // ── EYE SOCKET — deep hollow ──
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.65;
+    ctx.beginPath();ctx.ellipse(-1,-23,6.5,5.5,-0.1,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+
+    // ── EYE ──
+    if(this.eyeOpen){
+      // Iris glow
+      const eG=ctx.createRadialGradient(-1+this.eyeX,-23,0,-1+this.eyeX,-23,4.8);
+      eG.addColorStop(0,C.iris);eG.addColorStop(0.45,C.eye);eG.addColorStop(1,C.eye);
+      ctx.fillStyle=eG;
+      ctx.beginPath();ctx.ellipse(-1+this.eyeX,-23,4.5,4,-0.05,0,Math.PI*2);ctx.fill();
+      // Vertical slit pupil (reptilian)
+      ctx.fillStyle='rgba(0,0,0,0.92)';
+      ctx.beginPath();ctx.ellipse(-1+this.eyeX,-23,1.4,3.2,0,0,Math.PI*2);ctx.fill();
+      // Primary specular
+      ctx.fillStyle='rgba(255,255,255,0.65)';
+      ctx.beginPath();ctx.ellipse(-0.1+this.eyeX,-24.5,1.4,1.0,-0.4,0,Math.PI*2);ctx.fill();
+      // Secondary specular (depth)
+      ctx.fillStyle='rgba(255,255,255,0.20)';
+      ctx.beginPath();ctx.ellipse(0.5+this.eyeX,-21.5,0.8,0.6,0.5,0,Math.PI*2);ctx.fill();
+    } else {
+      // Blink — closed lid sweeps downward
+      ctx.fillStyle=C.body;ctx.globalAlpha=0.92;
+      ctx.beginPath();
+      ctx.moveTo(-6,-23);
+      ctx.bezierCurveTo(-3,-19,2,-19,4.5,-23);
+      ctx.bezierCurveTo(2,-27,-3,-27,-6,-23);
       ctx.closePath();ctx.fill();ctx.globalAlpha=1;
     }
 
-    // ── teeth ──
-    ctx.fillStyle='rgba(230,225,200,0.85)';
-    ctx.beginPath();
-    ctx.moveTo(6,0);ctx.lineTo(4,4);ctx.lineTo(9,4);ctx.lineTo(8,0);
-    ctx.moveTo(12,1);ctx.lineTo(10,5);ctx.lineTo(15,5);ctx.lineTo(14,1);
-    ctx.fill();
-
-    // ── head crest detail ──
-    ctx.strokeStyle=C.bodyD;ctx.lineWidth=0.8;ctx.globalAlpha=0.28;
-    ctx.beginPath();ctx.moveTo(-8,-10);ctx.bezierCurveTo(-5,-22,4,-26,10,-20);ctx.stroke();
+    // ── Cranial detail lines (temporal fenestrae suggestion) ──
+    ctx.strokeStyle=C.bodyD;ctx.lineWidth=0.75;ctx.globalAlpha=0.24;
+    ctx.beginPath();ctx.moveTo(-11,-10);ctx.bezierCurveTo(-8,-25,-1,-31,7,-26);ctx.stroke();
+    // Post-orbital bar
+    ctx.beginPath();ctx.moveTo(5,-28);ctx.bezierCurveTo(7,-20,5,-14,2,-8);ctx.stroke();
     ctx.globalAlpha=1;
 
     ctx.restore();
   }
 
-  // ── FOREARM ────────────────────────────────────────────────────
+  // ── T-REX FOREARM (vestigial — absurdly tiny, correct anatomy) ─
   _drawForearm(ax,ay,swingDeg,C,isBack){
     const ctx=this.ctx;
     const sw=swingDeg*(Math.PI/180);
-    const ex=ax+Math.sin(sw)*12+(isBack?-2:2);
-    const ey=ay+Math.abs(Math.cos(sw))*10+4;
-    ctx.save();if(isBack)ctx.globalAlpha=0.55;
-    this._bone(ax,ay,ex,ey,4,2.5,C.bodyL,C.body,C.bodyD);
-    // tiny claw
-    ctx.fillStyle=C.claw;ctx.globalAlpha=(isBack?0.55:1)*0.8;
+
+    // T-Rex arms were ~80cm — tiny against their massive body.
+    // Two functional fingers. Held palm-inward, slightly raised.
+    const uLen=7;  // upper arm
+    const fLen=5;  // forearm
+    const ux=ax+Math.sin(sw)*uLen*0.3+(isBack?-1.5:1.5);
+    const uy=ay+uLen+Math.abs(Math.cos(sw))*2;
+    const fx=ux+Math.sin(sw)*fLen*0.4+(isBack?-1:1);
+    const fy=uy+fLen;
+
+    ctx.save();
+    if(isBack)ctx.globalAlpha=0.48;
+
+    // Upper arm — tiny stub
+    this._bone(ax,ay,ux,uy,4,3,C.bodyL,C.body,C.bodyD);
+    // Forearm
+    this._bone(ux,uy,fx,fy,3,2,C.body,C.bodyD,C.bodyD);
+
+    // Two prominent curved claws (T-Rex had 2–3 functional fingers)
+    ctx.fillStyle=C.claw;
+    ctx.globalAlpha=(isBack?0.48:1)*0.9;
+    // Claw 1
     ctx.beginPath();
-    ctx.moveTo(ex,ey);ctx.bezierCurveTo(ex+2,ey+3,ex+5,ey+4,ex+6,ey+2);
-    ctx.bezierCurveTo(ex+5,ey,ex+2,ey,ex,ey);ctx.closePath();ctx.fill();
+    ctx.moveTo(fx-1,fy);
+    ctx.bezierCurveTo(fx-1,fy+2,fx+2,fy+4,fx+4,fy+2);
+    ctx.bezierCurveTo(fx+3,fy-0.5,fx,fy,fx-1,fy);
+    ctx.closePath();ctx.fill();
+    // Claw 2
+    ctx.beginPath();
+    ctx.moveTo(fx+2,fy+1);
+    ctx.bezierCurveTo(fx+2,fy+3,fx+5,fy+5,fx+7,fy+3);
+    ctx.bezierCurveTo(fx+6,fy,fx+3,fy+1,fx+2,fy+1);
+    ctx.closePath();ctx.fill();
+
     ctx.restore();
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  DUCK POSE
+  //  DUCK POSE — T-Rex horizontal speed-crouch
   // ═══════════════════════════════════════════════════════════════
   _drawDuck(C){
     const ctx=this.ctx;
     const x=this.x;
     const footY=GY;
     const legH=18;
-    const bodyBot=footY-legH;
-    const bodyTop=footY-DUCK_H;
+    const bodyBot=footY-legH;    // 302
+    const bodyTop=footY-DUCK_H;  // 276
     const bodyMid=bodyTop+(bodyBot-bodyTop)*0.46;
     const t=this.cycle;
 
@@ -2249,108 +2530,182 @@ class Dino {
       ctx.closePath();ctx.fill();
     }
 
-    // ── BACK LEG ──
-    const bkHipX=x+28,bkHipY=bodyBot;
-    const bkFtX=bkHipX-8,bkFtY=GY;
-    const bkIK=this._solveIK(bkHipX,bkHipY,bkFtX,bkFtY,14,12);
-    this._legIK(bkHipX,bkHipY,bkIK.kneeX,bkIK.kneeY,bkIK.footX,bkIK.footY,C,true);
-
-    // ── BODY ──
-    const bodyG=ctx.createLinearGradient(x+6,bodyTop,x+DUCK_W-6,bodyBot);
-    bodyG.addColorStop(0,C.bodyL);bodyG.addColorStop(0.4,C.body);bodyG.addColorStop(1,C.bodyD);
-    ctx.fillStyle=bodyG;
-    ctx.beginPath();
-    ctx.moveTo(x+DUCK_W-20,bodyTop);
-    ctx.bezierCurveTo(x+DUCK_W-8,bodyTop+4,x+DUCK_W-4,bodyMid-4,x+DUCK_W-2,bodyMid);
-    ctx.bezierCurveTo(x+DUCK_W,bodyMid+10,x+DUCK_W-4,bodyBot,x+DUCK_W-14,bodyBot+2);
-    ctx.bezierCurveTo(x+DUCK_W*0.5,bodyBot+5,x+14,bodyBot+3,x+10,bodyBot-1);
-    ctx.bezierCurveTo(x+6,bodyBot-8,x+6,bodyMid,x+8,bodyTop+10);
-    ctx.bezierCurveTo(x+10,bodyTop+2,x+14,bodyTop-2,x+DUCK_W-20,bodyTop);
-    ctx.closePath();ctx.fill();
-
-    // belly highlight
-    const belG=ctx.createLinearGradient(x+10,bodyMid,x+DUCK_W-10,bodyBot+4);
-    belG.addColorStop(0,C.belly);belG.addColorStop(1,'transparent');
-    ctx.fillStyle=belG;ctx.globalAlpha=0.35;
-    ctx.beginPath();
-    ctx.moveTo(x+12,bodyMid+4);
-    ctx.bezierCurveTo(x+10,bodyBot,x+22,bodyBot+4,x+DUCK_W*0.5,bodyBot+4);
-    ctx.bezierCurveTo(x+DUCK_W-20,bodyBot+4,x+DUCK_W-8,bodyBot,x+DUCK_W-6,bodyMid+4);
-    ctx.bezierCurveTo(x+DUCK_W*0.6,bodyMid+12,x+28,bodyMid+12,x+12,bodyMid+4);
-    ctx.fill();ctx.globalAlpha=1;
-
-    // dorsal spines
+    // ── TAIL (horizontal, extended backward) ──
+    const tb=this._tailBase*0.20;
+    const t1x=x+8,   t1y=bodyMid+2;
+    const t2x=x-5,   t2y=bodyMid+1+tb;
+    const t3x=x-18,  t3y=bodyMid+3+tb*1.5;
+    const t4x=x-30,  t4y=bodyMid+5+tb*2;
+    const t5x=x-40,  t5y=bodyMid+7+tb*2.4;
+    this._bone(t1x,t1y,t2x,t2y, 12,9.5, C.body,C.body,C.bodyD);
+    this._bone(t2x,t2y,t3x,t3y, 9.5,7,  C.body,C.bodyD,C.bodyD);
+    this._bone(t3x,t3y,t4x,t4y, 7,4.5,  C.bodyD,C.bodyD,C.bodyD);
+    this._bone(t4x,t4y,t5x,t5y, 4.5,1,  C.bodyD,C.bodyD,C.bodyD);
+    // Tail dorsal spines
     ctx.fillStyle=C.scale;
-    [[x+DUCK_W-20,bodyTop-2,5],[x+DUCK_W-12,bodyTop+2,3.5]].forEach(([sx,sy,sz])=>{
+    [[t2x,t2y-9,6],[t3x,t3y-7,4.5],[t4x,t4y-5,3]].forEach(([sx,sy,sz])=>{
       ctx.beginPath();
-      ctx.moveTo(sx-sz*0.5,sy+sz*0.5);
-      ctx.bezierCurveTo(sx-sz*0.1,sy-sz,sx+sz*0.1,sy-sz,sx+sz*0.5,sy+sz*0.5);
+      ctx.moveTo(sx-sz*0.45,sy+sz*0.55);
+      ctx.bezierCurveTo(sx-sz*0.12,sy-sz,sx+sz*0.12,sy-sz,sx+sz*0.45,sy+sz*0.55);
       ctx.closePath();ctx.fill();
     });
 
-    // surface scales
-    ctx.fillStyle=C.scale;ctx.globalAlpha=0.20;
-    [[x+DUCK_W-28,bodyTop+8,3],[x+DUCK_W-18,bodyMid,2.5],[x+DUCK_W*0.4,bodyMid-2,2.5]].forEach(([sx,sy,sr])=>{
-      ctx.beginPath();ctx.ellipse(sx,sy,sr,sr*0.55,-0.3,0,Math.PI*2);ctx.fill();
+    // ── BACK LEG (deeply bent, crouching) ──
+    const bkHipX=x+28, bkHipY=bodyBot;
+    const bkFtX=bkHipX-10, bkFtY=GY;
+    const bkIK=this._solveIK(bkHipX,bkHipY,bkFtX,bkFtY,15,13);
+    this._legIK(bkHipX,bkHipY,bkIK.kneeX,bkIK.kneeY,bkIK.footX,bkIK.footY,C,true);
+
+    // ── BODY (horizontal torpedo — T-Rex crouching aerodynamically) ──
+    const bodyG=ctx.createLinearGradient(x+6,bodyTop,x+DUCK_W-4,bodyBot+4);
+    bodyG.addColorStop(0,C.bodyL);bodyG.addColorStop(0.35,C.body);bodyG.addColorStop(0.72,C.bodyD);bodyG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=bodyG;
+    ctx.beginPath();
+    ctx.moveTo(x+DUCK_W-22,bodyTop+1);   // neck/shoulder rear
+    ctx.bezierCurveTo(x+DUCK_W-10,bodyTop+1,x+DUCK_W-3,bodyMid-5,x+DUCK_W-1,bodyMid);
+    ctx.bezierCurveTo(x+DUCK_W+1,bodyMid+9,x+DUCK_W-3,bodyBot,x+DUCK_W-14,bodyBot+2);
+    ctx.bezierCurveTo(x+DUCK_W*0.52,bodyBot+5,x+16,bodyBot+3,x+12,bodyBot-1);
+    ctx.bezierCurveTo(x+7,bodyBot-8,x+7,bodyMid,x+9,bodyTop+10);
+    ctx.bezierCurveTo(x+11,bodyTop+2,x+16,bodyTop-1,x+DUCK_W-22,bodyTop+1);
+    ctx.closePath();ctx.fill();
+
+    // Belly highlight
+    const belG=ctx.createLinearGradient(x+12,bodyMid,x+DUCK_W-10,bodyBot+4);
+    belG.addColorStop(0,C.belly);belG.addColorStop(1,'transparent');
+    ctx.fillStyle=belG;ctx.globalAlpha=0.38;
+    ctx.beginPath();
+    ctx.moveTo(x+14,bodyMid+4);
+    ctx.bezierCurveTo(x+10,bodyBot,x+24,bodyBot+5,x+DUCK_W*0.5,bodyBot+5);
+    ctx.bezierCurveTo(x+DUCK_W-20,bodyBot+4,x+DUCK_W-8,bodyBot,x+DUCK_W-6,bodyMid+4);
+    ctx.bezierCurveTo(x+DUCK_W*0.6,bodyMid+11,x+28,bodyMid+11,x+14,bodyMid+4);
+    ctx.fill();ctx.globalAlpha=1;
+
+    // Dorsal spines (running along the spine of the crouching body)
+    ctx.fillStyle=C.scale;
+    [[x+DUCK_W-22,bodyTop-3,6],[x+DUCK_W-14,bodyTop-1,5],[x+DUCK_W-8,bodyTop+3,4.2],[x+DUCK_W-3,bodyMid-3,3.5]].forEach(([sx,sy,sz])=>{
+      ctx.beginPath();
+      ctx.moveTo(sx-sz*0.45,sy+sz*0.6);
+      ctx.bezierCurveTo(sx-sz*0.12,sy-sz*1.05,sx+sz*0.12,sy-sz*1.05,sx+sz*0.45,sy+sz*0.6);
+      ctx.closePath();ctx.fill();
+    });
+
+    // Scale texture
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.18;
+    [[x+DUCK_W-30,bodyTop+8,3],[x+DUCK_W-20,bodyMid+2,2.5],[x+DUCK_W*0.38,bodyMid,2.5],[x+DUCK_W*0.22,bodyMid+4,2.2]].forEach(([sx,sy,sr])=>{
+      ctx.beginPath();ctx.ellipse(sx,sy,sr,sr*0.52,-0.3,0,Math.PI*2);ctx.fill();
     });
     ctx.globalAlpha=1;
 
-    // ── FOLDED NECK + HEAD ──
-    // Neck folds downward-forward in duck pose
-    const nkBx=x+DUCK_W-22,nkBy=bodyTop+2;
-    const nkEx=x+DUCK_W-8, nkEy=bodyTop+14;
-    this._bone(nkBx,nkBy,nkEx,nkEy,7,5.5,C.bodyL,C.body,C.bodyD);
+    // ── NECK — horizontal thrust forward ──
+    const nkBx=x+DUCK_W-22, nkBy=bodyTop+2;
+    const nkEx=x+DUCK_W-6,  nkEy=bodyTop+12;
+    this._bone(nkBx,nkBy,nkEx,nkEy,11,8,C.bodyL,C.body,C.bodyD);
 
-    // Duck head (lowered, forward-thrust)
-    ctx.save();
-    ctx.translate(nkEx,nkEy);ctx.rotate(0.38);
-    const hdG=ctx.createRadialGradient(-2,-9,1,-2,-9,13);
-    hdG.addColorStop(0,C.bodyL);hdG.addColorStop(0.5,C.body);hdG.addColorStop(1,C.bodyD);
-    ctx.fillStyle=hdG;
+    // Neck throat highlight
+    ctx.fillStyle=C.belly;ctx.globalAlpha=0.25;
     ctx.beginPath();
-    ctx.moveTo(-8,-4);
-    ctx.bezierCurveTo(-10,-12,-6,-18,-1,-19);
-    ctx.bezierCurveTo(4,-20,10,-17,14,-12);
-    ctx.bezierCurveTo(18,-8,18,-2,16,1);
-    ctx.bezierCurveTo(12,4,6,5,2,4);
-    ctx.bezierCurveTo(-2,3,-6,0,-8,-4);
-    ctx.closePath();ctx.fill();
-
-    // jaw
-    ctx.fillStyle=C.belly;ctx.globalAlpha=0.42;
-    ctx.beginPath();
-    ctx.moveTo(-2,-2);ctx.bezierCurveTo(2,0,10,0,14,-1);
-    ctx.bezierCurveTo(10,4,2,5,-2,3);ctx.bezierCurveTo(-4,2,-3,-1,-2,-2);
+    ctx.moveTo(nkBx+7,nkBy+3);
+    ctx.bezierCurveTo((nkBx+nkEx)*0.5+6,(nkBy+nkEy)*0.5+3,nkEx+5,nkEy+4,nkEx+4,nkEy+1);
+    ctx.bezierCurveTo(nkEx+2,nkEy+6,(nkBx+nkEx)*0.5+2,(nkBy+nkEy)*0.5+7,nkBx+4,nkBy+7);
     ctx.closePath();ctx.fill();ctx.globalAlpha=1;
 
-    // eye (squinting duck)
+    // ── HEAD (lowered, forward-thrust — duck hunting pose) ──
+    ctx.save();
+    ctx.translate(nkEx,nkEy);
+    ctx.rotate(0.32);  // slight downward tilt when ducking
+
+    // Skull — same T-Rex shape, oriented forward
+    const hdG=ctx.createLinearGradient(-12,-26,20,8);
+    hdG.addColorStop(0,C.bodyL);hdG.addColorStop(0.4,C.body);hdG.addColorStop(0.82,C.bodyD);
+    ctx.fillStyle=hdG;
+    ctx.beginPath();
+    ctx.moveTo(-12,-7);
+    ctx.bezierCurveTo(-14,-18,-10,-27,-4,-29);
+    ctx.bezierCurveTo(0,-31,8,-29,14,-24);
+    ctx.bezierCurveTo(18,-21,22,-15,24,-9);
+    ctx.bezierCurveTo(25,-5,24,0,22,2);
+    ctx.bezierCurveTo(20,3.5,16,3.5,11,2);
+    ctx.bezierCurveTo(5,0.5,-1,-1,-5,-2);
+    ctx.bezierCurveTo(-8,-3,-11,-5,-12,-7);
+    ctx.closePath();ctx.fill();
+
+    // Lower jaw (wide open for speed-run crouch)
+    const djG=ctx.createLinearGradient(-9,0,22,9);
+    djG.addColorStop(0,C.body);djG.addColorStop(1,C.bodyD);
+    ctx.fillStyle=djG;
+    ctx.beginPath();
+    ctx.moveTo(-8,-1);
+    ctx.bezierCurveTo(-2,3,6,5,12,5);
+    ctx.bezierCurveTo(18,4,22,1,23,-3);
+    ctx.bezierCurveTo(21,0,19,4,15,6.5);
+    ctx.bezierCurveTo(8,9,0,8,-4,5);
+    ctx.bezierCurveTo(-7,3,-9,1,-8,-1);
+    ctx.closePath();ctx.fill();
+
+    // Jaw belly
+    ctx.fillStyle=C.belly;ctx.globalAlpha=0.38;
+    ctx.beginPath();
+    ctx.moveTo(-4,4);ctx.bezierCurveTo(2,7.5,10,7.5,17,5.5);
+    ctx.bezierCurveTo(12,9,3,9.5,-2,6.5);ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+
+    // Upper teeth
+    ctx.fillStyle='rgba(228,224,198,0.94)';
+    [[2.5,1.5,5,1.9],[6.5,1.5,4.5,1.8],[10.5,1.8,4,1.7],[14.5,1.4,3.4,1.6]].forEach(([tx,ty,th,tw])=>{
+      ctx.beginPath();ctx.moveTo(tx-tw,ty);ctx.lineTo(tx,ty+th);ctx.lineTo(tx+tw,ty);ctx.closePath();ctx.fill();
+    });
+    // Lower teeth
+    ctx.fillStyle='rgba(218,214,188,0.88)';
+    [[5,5,3.8,1.7],[9,5,3.2,1.6],[13,4.5,2.6,1.5]].forEach(([tx,ty,th,tw])=>{
+      ctx.beginPath();ctx.moveTo(tx-tw,ty+0.5);ctx.lineTo(tx,ty-th);ctx.lineTo(tx+tw,ty+0.5);ctx.closePath();ctx.fill();
+    });
+
+    // Nostril
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.78;
+    ctx.beginPath();ctx.ellipse(17,-17,2.5,1.7,0.42,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+
+    // Nasal ridge
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.35;
+    ctx.beginPath();ctx.moveTo(4,-29);ctx.bezierCurveTo(10,-27,15,-22,18,-19);
+    ctx.bezierCurveTo(15,-22,10,-26,5,-28);ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+
+    // Supraorbital ridge
+    ctx.fillStyle=C.scale;ctx.globalAlpha=0.42;
+    ctx.beginPath();ctx.moveTo(-7,-25);ctx.bezierCurveTo(-4,-22,1,-21,5,-23);
+    ctx.bezierCurveTo(3,-27,-3,-28,-7,-25);ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+
+    // Eye socket
+    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.62;
+    ctx.beginPath();ctx.ellipse(-1,-21,6,5,-0.08,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+
+    // Eye (squinting / alert when ducking)
     if(this.eyeOpen){
-      ctx.fillStyle=C.eye;
-      ctx.beginPath();ctx.ellipse(2,-12,3.5,2.8,0,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='rgba(0,0,0,0.85)';
-      ctx.beginPath();ctx.ellipse(2+this.eyeX,-12,1.1,2.2,0,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='rgba(255,255,255,0.5)';
-      ctx.beginPath();ctx.ellipse(2.8+this.eyeX,-13,0.9,0.7,-0.3,0,Math.PI*2);ctx.fill();
+      const eG=ctx.createRadialGradient(-1+this.eyeX,-21,0,-1+this.eyeX,-21,4.4);
+      eG.addColorStop(0,C.iris);eG.addColorStop(0.45,C.eye);eG.addColorStop(1,C.eye);
+      ctx.fillStyle=eG;
+      ctx.beginPath();ctx.ellipse(-1+this.eyeX,-21,4.2,3.8,-0.05,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(0,0,0,0.90)';
+      ctx.beginPath();ctx.ellipse(-1+this.eyeX,-21,1.3,3.0,0,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.62)';
+      ctx.beginPath();ctx.ellipse(-0.1+this.eyeX,-22.4,1.3,1.0,-0.4,0,Math.PI*2);ctx.fill();
     } else {
-      ctx.fillStyle=C.body;ctx.globalAlpha=0.85;
+      ctx.fillStyle=C.body;ctx.globalAlpha=0.90;
       ctx.beginPath();
-      ctx.moveTo(-1,-12);ctx.bezierCurveTo(0,-10,3,-10,5,-12);
-      ctx.bezierCurveTo(3,-14,0,-14,-1,-12);ctx.fill();ctx.globalAlpha=1;
+      ctx.moveTo(-6,-21);ctx.bezierCurveTo(-3,-17,2,-17,4.5,-21);
+      ctx.bezierCurveTo(2,-25,-3,-25,-6,-21);ctx.closePath();ctx.fill();ctx.globalAlpha=1;
     }
-    // nostril
-    ctx.fillStyle=C.bodyD;ctx.globalAlpha=0.65;
-    ctx.beginPath();ctx.ellipse(12,-10,1.8,1.3,0.35,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=1;
+
     ctx.restore();
 
-    // ── FRONT LEG ──
-    const frHipX=x+DUCK_W-28,frHipY=bodyBot+1;
-    const frFtX=frHipX+10,frFtY=GY;
-    const frIK=this._solveIK(frHipX,frHipY,frFtX,frFtY,14,12);
+    // ── FRONT LEG (deeply bent) ──
+    const frHipX=x+DUCK_W-28, frHipY=bodyBot+1;
+    const frFtX=frHipX+10, frFtY=GY;
+    const frIK=this._solveIK(frHipX,frHipY,frFtX,frFtY,15,13);
     this._legIK(frHipX,frHipY,frIK.kneeX,frIK.kneeY,frIK.footX,frIK.footY,C,false);
 
-    // tail stub in duck
-    this._bone(x+10,bodyMid+2,x-4,bodyMid+8,7,3.5,C.body,C.bodyD,C.bodyD);
+    // Tiny arm visible even in duck pose
+    ctx.save();ctx.globalAlpha=0.70;
+    this._bone(nkBx-2,nkBy+8,nkBx+2,nkBy+16,3,2,C.body,C.bodyD,C.bodyD);
+    ctx.restore();
   }
 }
 
